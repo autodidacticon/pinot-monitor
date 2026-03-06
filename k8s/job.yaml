@@ -1,0 +1,29 @@
+# One-shot test sweep. Requires the Deployment + Service from deploy.yaml to be running.
+#
+# Usage:
+#   kubectl apply -f k8s/deploy.yaml
+#   kubectl -n pinot delete job pinot-monitor-test --ignore-not-found
+#   kubectl apply -f k8s/job.yaml
+#   kubectl -n pinot logs -f job/pinot-monitor-test
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pinot-monitor-test
+  namespace: pinot
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: curl
+          image: curlimages/curl:latest
+          command: ["curl", "-sf", "-X", "POST", "http://pinot-monitor:3000/sweep"]
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "32Mi"

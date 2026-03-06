@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pinot-monitor
+  namespace: pinot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pinot-monitor-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pinot-monitor-reader
+subjects:
+  - kind: ServiceAccount
+    name: pinot-monitor
+    namespace: pinot
+roleRef:
+  kind: ClusterRole
+  name: pinot-monitor-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pinot-monitor
+  namespace: pinot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pinot-monitor
+  template:
+    metadata:
+      labels:
+        app: pinot-monitor
+    spec:
+      serviceAccountName: pinot-monitor
+      containers:
+        - name: monitor
+          image: pinot-monitor:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://host.internal:11434/v1"
+            - name: OLLAMA_MODEL
+              value: "qwen3:32b"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pinot-monitor
+  namespace: pinot
+spec:
+  selector:
+    app: pinot-monitor
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pinot-monitor-sweep
+  namespace: pinot
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              command: ["curl", "-sf", "-X", "POST", "http://pinot-monitor:3000/sweep"]
+              resources:
+                requests:
+                  cpu: "10m"
+                  memory: "16Mi"
+                limits:
+                  cpu: "100m"
+                  memory: "32Mi"
