@@ -1,19 +1,21 @@
 {
-  "name": "pinot-monitor",
+  "name": "pinot-agents",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
-  "main": "src/index.ts",
+  "workspaces": [
+    "packages/shared",
+    "packages/monitor",
+    "packages/operator",
+    "packages/mitigator"
+  ],
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "npm start -w @pinot-agents/monitor",
+    "start:operator": "npm start -w @pinot-agents/operator",
+    "start:mitigator": "npm start -w @pinot-agents/mitigator",
+    "start:all": "npm start -w @pinot-agents/monitor & npm start -w @pinot-agents/operator & npm start -w @pinot-agents/mitigator & wait",
+    "typecheck": "tsc -b packages/shared packages/monitor packages/operator packages/mitigator",
     "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "openai": "^4.96.0",
-    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",

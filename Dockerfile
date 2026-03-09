@@ -12,11 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --legacy-peer-deps
+COPY packages/shared/package.json packages/shared/
+COPY packages/monitor/package.json packages/monitor/
+COPY packages/operator/package.json packages/operator/
+COPY packages/mitigator/package.json packages/mitigator/
+RUN npm ci --legacy-peer-deps -w @pinot-agents/shared -w @pinot-agents/monitor -w @pinot-agents/operator -w @pinot-agents/mitigator
 
 COPY tsconfig.json ./
-COPY src/ ./src/
+COPY packages/shared/ packages/shared/
+COPY packages/monitor/ packages/monitor/
+COPY packages/operator/ packages/operator/
+COPY packages/mitigator/ packages/mitigator/
 
-EXPOSE 3000
+EXPOSE 3000 3001 3002
 
-CMD ["npx", "tsx", "src/index.ts"]
+CMD ["npm", "start"]

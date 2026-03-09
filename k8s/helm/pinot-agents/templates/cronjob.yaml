@@ -1,0 +1,30 @@
+{{- if .Values.sweep.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-sweep
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sweep
+spec:
+  schedule: {{ .Values.sweep.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "pinot-agents.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: sweep
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: sweep
+              image: curlimages/curl:latest
+              command:
+                - curl
+                - -sf
+                - -X
+                - POST
+                - "http://{{ include "pinot-agents.fullname" . }}-monitor:{{ .Values.monitor.port }}/sweep"
+{{- end }}

@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-monitor
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitor
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-operator
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-mitigator
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mitigator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-readonly
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-mitigator
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-monitor
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pinot-agents.fullname" . }}-readonly
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pinot-agents.fullname" . }}-monitor
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-operator
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pinot-agents.fullname" . }}-readonly
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pinot-agents.fullname" . }}-operator
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pinot-agents.fullname" . }}-mitigator
+  labels:
+    {{- include "pinot-agents.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pinot-agents.fullname" . }}-mitigator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pinot-agents.fullname" . }}-mitigator
+    namespace: {{ .Release.Namespace }}

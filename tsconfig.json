@@ -1,15 +1,9 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "bundler",
-    "esModuleInterop": true,
-    "strict": true,
-    "skipLibCheck": true,
-    "outDir": "dist",
-    "rootDir": "src",
-    "resolveJsonModule": true,
-    "declaration": true
-  },
-  "include": ["src/**/*.ts"]
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/monitor" },
+    { "path": "packages/operator" },
+    { "path": "packages/mitigator" }
+  ],
+  "files": []
 }

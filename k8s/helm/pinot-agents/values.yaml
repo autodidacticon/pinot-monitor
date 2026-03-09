@@ -1,0 +1,63 @@
+global:
+  llm:
+    baseUrl: "http://host.internal:11434/v1"
+    model: "glm-4.7-flash"
+    apiKey: "ollama"
+  pinot:
+    controllerHost: "pinot-controller.pinot.svc.cluster.local"
+    controllerPort: 9000
+    brokerHost: "pinot-broker.pinot.svc.cluster.local"
+    brokerPort: 8099
+
+monitor:
+  image: pinot-monitor:latest
+  port: 3000
+  replicas: 1
+  maxTurns: 15
+  sessionTtlMs: 3600000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+  # Override global LLM settings per agent
+  llm: {}
+  #  model: "gpt-4o-mini"
+  #  baseUrl: "https://api.openai.com/v1"
+  #  apiKey: ""
+
+operator:
+  image: pinot-monitor:latest
+  port: 3002
+  replicas: 1
+  trustLevel: 0
+  alertWebhookUrl: ""
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+
+mitigator:
+  image: pinot-monitor:latest
+  port: 3001
+  replicas: 1
+  maxTurns: 10
+  dryRun: true
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+  llm: {}
+  #  model: "gpt-4o"
+
+sweep:
+  enabled: true
+  schedule: "*/30 * * * *"

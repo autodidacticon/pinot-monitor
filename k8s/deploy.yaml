@@ -61,7 +61,7 @@ spec:
             - name: OLLAMA_BASE_URL
               value: "http://host.internal:11434/v1"
             - name: OLLAMA_MODEL
-              value: "qwen3:32b"
+              value: "glm-4.7-flash"
           livenessProbe:
             httpGet:
               path: /health
@@ -111,7 +111,7 @@ spec:
           containers:
             - name: curl
               image: curlimages/curl:latest
-              command: ["curl", "-sf", "-X", "POST", "http://pinot-monitor:3000/sweep"]
+              command: ["curl", "-sf", "-X", "POST", "http://pinot-monitor:3000/sweep", "-o", "/dev/null"]
               resources:
                 requests:
                   cpu: "10m"

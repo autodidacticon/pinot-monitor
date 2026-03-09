@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pinot-agents
+description: Multi-agent system for autonomous monitoring and remediation of Apache Pinot clusters
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
