@@ -5,4 +5,6 @@ export declare const pinotClusterInfo: import("@pinot-agents/shared").ToolDefini
 export declare const pinotDebugTable: import("@pinot-agents/shared").ToolDefinition;
 export declare const pinotTableSize: import("@pinot-agents/shared").ToolDefinition;
 export declare const pinotBrokerLatency: import("@pinot-agents/shared").ToolDefinition;
+export declare const pinotIngestionStatus: import("@pinot-agents/shared").ToolDefinition;
 export declare const pinotQuery: import("@pinot-agents/shared").ToolDefinition;
+export declare const pinotServerMetrics: import("@pinot-agents/shared").ToolDefinition;

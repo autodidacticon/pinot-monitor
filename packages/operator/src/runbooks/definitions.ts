@@ -127,6 +127,23 @@ export const runbooks: Runbook[] = [
     minTrustLevel: 1, // suggest mode — don't auto-remediate query issues
   },
   {
+    id: "ingestion_lag",
+    name: "Ingestion Lag Response",
+    incidentPattern: {
+      severity: ["WARNING", "CRITICAL"],
+      componentPattern: /ingestion|consumer|realtime|kafka/i,
+      evidencePattern: /lag|stuck|consuming|behind|offset|partition/i,
+    },
+    actions: [
+      { tool: "kubectl_get", args: { subcommand: "describe", resource: "pod", name: "pinot-server-0", namespace: "pinot" } },
+    ],
+    verifyPrompt: "Check if ingestion lag for the affected REALTIME table has decreased",
+    maxRetries: 2,
+    escalateAfterRetries: true,
+    cooldownMs: 600_000, // 10 minutes
+    minTrustLevel: 1, // suggest mode
+  },
+  {
     id: "storage_pressure",
     name: "Storage Pressure Response",
     incidentPattern: {

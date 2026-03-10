@@ -89,6 +89,50 @@ async function sendAlert(incident, reason) {
         }
     }
 }
+// Pre-dispatch cluster state verification via monitor /chat endpoint
+async function verifyIncidentState(incident) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.verifyTimeoutMs);
+    try {
+        const res = await fetch(`${config.services.monitorUrl}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: `Is ${incident.component} currently experiencing issues? Check quickly and respond with JSON only: {"confirmed": true/false, "reason": "..."}`,
+            }),
+            signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) {
+            // Non-OK response — fail open, proceed with dispatch
+            return { confirmed: true, reason: `Monitor returned HTTP ${res.status}, proceeding with dispatch` };
+        }
+        const text = await res.text();
+        // Try to extract JSON from the response (LLM may wrap it in markdown or extra text)
+        const jsonMatch = text.match(/\{[\s\S]*?"confirmed"[\s\S]*?\}/);
+        if (jsonMatch) {
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return {
+                    confirmed: parsed.confirmed !== false,
+                    reason: parsed.reason ?? "No reason provided",
+                };
+            }
+            catch {
+                // JSON parse failed — fail open
+                return { confirmed: true, reason: "Could not parse monitor response, proceeding with dispatch" };
+            }
+        }
+        // No JSON found — fail open
+        return { confirmed: true, reason: "Monitor response not in expected format, proceeding with dispatch" };
+    }
+    catch (err) {
+        clearTimeout(timeout);
+        // Timeout or network error — fail open
+        const msg = err instanceof Error ? err.message : String(err);
+        return { confirmed: true, reason: `Verification failed (${msg}), proceeding with dispatch` };
+    }
+}
 async function triageIncident(incident) {
     const startTime = Date.now();
     incidentsReceived.inc();
@@ -231,6 +275,27 @@ async function triageIncident(incident) {
         logAudit(entry);
         triageLatency.observe((Date.now() - startTime) / 1000);
         return { action: "logged", runbookId: runbook.id, message: `Max concurrent remediations (${MAX_CONCURRENT_REMEDIATIONS}) reached` };
+    }
+    // Pre-dispatch verification: confirm incident is still active
+    if (config.verifyBeforeDispatch && (incident.severity === "WARNING" || incident.severity === "CRITICAL")) {
+        const verification = await verifyIncidentState(incident);
+        if (!verification.confirmed) {
+            const entry = {
+                timestamp: new Date().toISOString(),
+                agent: "operator",
+                action: "stale_incident",
+                target: incident.component,
+                inputSummary: `runbook=${runbook.id}, verification=${verification.reason}`,
+                outputSummary: "Incident no longer active, skipping dispatch",
+                correlationId,
+            };
+            logAudit(entry);
+            persistAuditEntry(entry);
+            console.log(`[verify] Incident on ${incident.component} no longer active: ${verification.reason}`);
+            triageLatency.observe((Date.now() - startTime) / 1000);
+            return { action: "stale", runbookId: runbook.id, message: `Incident no longer active: ${verification.reason}` };
+        }
+        console.log(`[verify] Incident on ${incident.component} confirmed: ${verification.reason}`);
     }
     // Dispatch to mitigator
     incidentsDispatched.inc();

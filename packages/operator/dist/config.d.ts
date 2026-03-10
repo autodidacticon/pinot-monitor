@@ -15,5 +15,7 @@ export declare const config: {
         readonly maxRequests: number;
         readonly windowMs: number;
     };
+    readonly verifyBeforeDispatch: boolean;
+    readonly verifyTimeoutMs: number;
     readonly shutdownTimeoutMs: number;
 };

@@ -30,46 +30,59 @@ Execute the following checks in order. Do NOT skip steps.
    - If the controller is unreachable, emit a CRITICAL incident immediately and note that subsequent Pinot API checks may fail.
    - Continue with remaining checks regardless (K8s checks will still work).
 
-2. **K8s Warning Events** — Use kubectl_events to check for recent warning/error events in the "pinot" namespace (last 30 minutes).
+2. **Component Metrics** — Use pinot_server_metrics (with component "all") to collect operational metrics from all Pinot components.
+   - This provides deeper health data than the simple health check: response times, instance counts, segment error counts, broker routing table status, and tenant info.
+   - Flag any component with health response time > 5s as WARNING.
+   - If any segments are in ERROR state, flag as CRITICAL.
+   - Include the metrics summary in the report under a "Component Metrics" section.
+
+3. **K8s Warning Events** — Use kubectl_events to check for recent warning/error events in the "pinot" namespace (last 30 minutes).
    - Look for OOMKilled, Evicted, FailedScheduling, Unhealthy, BackOff, FailedMount events
    - If OOMKill or Eviction events are found, flag them as CRITICAL incidents
    - If BackOff or FailedMount events are found, flag them as WARNING incidents
 
-3. **K8s Pod Status** — Use kubectl_get to check pod status in the "pinot" namespace:
+4. **K8s Pod Status** — Use kubectl_get to check pod status in the "pinot" namespace:
    - \`get pods -o wide\` to see status, restarts, node placement
    - If any pods are not Running/Ready, use \`describe pod <name>\` for details
 
-4. **Pinot Health Endpoints** — Already checked controller in step 1. Review broker and server status from that result.
+5. **Pinot Health Endpoints** — Already checked controller in step 1. Review broker and server status from that result.
 
-5. **Cluster Info** — Use pinot_cluster_info to verify cluster metadata and instance list
+6. **Cluster Info** — Use pinot_cluster_info to verify cluster metadata and instance list
 
-6. **Tables** — Use pinot_tables to list all tables
+7. **Tables** — Use pinot_tables to list all tables
    - If tables exist, check a sample of them for configuration issues
 
-7. **Segments** — For each table found, use pinot_segments to check segment status
+8. **Segments** — For each table found, use pinot_segments to check segment status
    - The tool returns the table type (REALTIME/OFFLINE/HYBRID) along with segments
    - **IMPORTANT**: OFFLINE segments in OFFLINE-type tables are NORMAL — do NOT flag them as incidents
    - Only flag segments that are in ERROR state, or OFFLINE segments in REALTIME-type tables (which indicates a problem)
 
-8. **Storage Check** — Use pinot_table_size (with no tableName) to check storage across all tables
+9. **Ingestion Lag** — Use pinot_ingestion_status (with no tableName) to check consuming segment status across all REALTIME tables
+   - If no REALTIME tables exist, note "No REALTIME tables — ingestion lag check skipped" and move on
+   - Flag stuck consumers (NOT_CONSUMING / PAUSED state) as WARNING or CRITICAL incidents
+   - Flag high consumer lag (>10000 messages behind) as WARNING incidents
+   - Include per-table ingestion status in the report under an "Ingestion Status" section
+   - If issues are detected, emit a structured incident with component "pinot-ingestion" and evidence describing the lag or stuck consumer
+
+10. **Storage Check** — Use pinot_table_size (with no tableName) to check storage across all tables
    - Flag any table exceeding 1GB as WARNING
    - Flag any table exceeding 5GB as CRITICAL
    - Note total storage across all tables in the report
    - If any table is flagged, include a storage incident in the structured output
 
-9. **Query Performance** — Use pinot_broker_latency (with no tableName) to probe broker query latency across all tables
+11. **Query Performance** — Use pinot_broker_latency (with no tableName) to probe broker query latency across all tables
    - Flag any table with latency above 5s as WARNING
    - Flag any table with latency above 30s as CRITICAL
    - Include per-table latency in the report under a "Query Performance" section
    - If high latency is detected, emit a structured incident with component "pinot-broker" and evidence describing the latency
 
-10. **Data-Level Checks** — If tables exist, use pinot_query to run basic health queries:
+12. **Data-Level Checks** — If tables exist, use pinot_query to run basic health queries:
    - Row counts: \`SELECT COUNT(*) FROM tableName\`
    - Freshness: First get the table schema using pinot_tables with the table name to find time columns. Then query \`SELECT MAX(timeColumn) FROM tableName\` using the actual time column from the schema. If no time column exists, skip the freshness check for that table. Do NOT hardcode column names like "event_time".
 
-11. **Deep Diagnostics** — ONLY if issues were found in steps 1-10, use pinot_debug_table on affected tables
+13. **Deep Diagnostics** — ONLY if issues were found in steps 1-11, use pinot_debug_table on affected tables
 
-12. **OpenClaw Pods** (secondary) — Use kubectl_get to check pods in the "openclaw" namespace
+14. **OpenClaw Pods** (secondary) — Use kubectl_get to check pods in the "openclaw" namespace
    - Brief status check only
 
 ## Output Format
@@ -97,11 +110,17 @@ Controller: [OK/FAIL + details]
 Broker:     [OK/FAIL + details]
 Server:     [OK/FAIL + details]
 
+── Component Metrics ───────────────────
+[Per-component response times, instance counts, segment error counts, routing table status, tenant info]
+
 ── Cluster ─────────────────────────────
 [Cluster info summary]
 
 ── Tables & Segments ───────────────────
 [Table count, segment status summary]
+
+── Ingestion Status ────────────────────
+[REALTIME table consuming segment status, lag, stuck consumers — or "No REALTIME tables"]
 
 ── Storage ─────────────────────────────
 [Per-table sizes, total storage, any threshold violations]

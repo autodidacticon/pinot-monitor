@@ -299,7 +299,124 @@ export const pinotBrokerLatency = defineTool(
   },
 );
 
-// 8. SQL query via broker
+// 8. Ingestion lag / consuming segment status for REALTIME tables
+export const pinotIngestionStatus = defineTool(
+  "pinot_ingestion_status",
+  "Check consuming segment status and ingestion lag for REALTIME Pinot tables. Detects stuck consumers, high lag, and partition issues. If no tableName is given, checks all REALTIME tables.",
+  z.object({
+    tableName: z.string().optional().describe("If provided, check this specific table. Otherwise check all REALTIME tables."),
+  }),
+  async ({ tableName }) => {
+    // Helper: check consuming segments for a single table
+    async function checkTable(table: string): Promise<string> {
+      const raw = await pinotFetch(controllerUrl(`/tables/${table}/consumingSegmentsInfo`), 15_000);
+      try {
+        const data = JSON.parse(raw);
+        const segments = data._segmentToConsumingInfoMap ?? data;
+        const segmentEntries = Object.entries(segments);
+        if (segmentEntries.length === 0) {
+          return `  ${table}: No consuming segments found (table may be OFFLINE-only or fully caught up)`;
+        }
+
+        const lines: string[] = [`  ${table}: ${segmentEntries.length} consuming segment(s)`];
+        let hasIssue = false;
+
+        for (const [segName, segInfo] of segmentEntries) {
+          const info = segInfo as Record<string, unknown>;
+          const partitionOffsetInfo = info.partitionOffsetInfo as Record<string, unknown> | undefined;
+          const consumerState = String(info.consumerState ?? info.status ?? "UNKNOWN");
+
+          let lagStr = "";
+          if (partitionOffsetInfo) {
+            const currentOffsets = partitionOffsetInfo.currentOffsetsMap as Record<string, string> | undefined;
+            const latestOffsets = partitionOffsetInfo.latestUpstreamOffsetMap as Record<string, string> | undefined;
+            if (currentOffsets && latestOffsets) {
+              const lagParts: string[] = [];
+              for (const [partition, current] of Object.entries(currentOffsets)) {
+                const latest = latestOffsets[partition];
+                if (latest !== undefined) {
+                  const lag = BigInt(latest) - BigInt(current);
+                  lagParts.push(`p${partition}:${lag.toString()}`);
+                  if (lag > 10000n) hasIssue = true;
+                }
+              }
+              if (lagParts.length > 0) lagStr = ` lag=[${lagParts.join(", ")}]`;
+            }
+          }
+
+          let statusLabel = "OK";
+          if (consumerState === "NOT_CONSUMING" || consumerState === "PAUSED") {
+            statusLabel = "STUCK";
+            hasIssue = true;
+          } else if (consumerState === "CONSUMING") {
+            statusLabel = "OK";
+          } else {
+            statusLabel = consumerState;
+          }
+
+          lines.push(`    ${segName}: [${statusLabel}] state=${consumerState}${lagStr}`);
+        }
+
+        if (hasIssue) {
+          lines.push(`    WARNING: Issues detected for ${table} — stuck consumers or high lag`);
+        }
+        return lines.join("\n");
+      } catch {
+        // If JSON parse fails, it might be an error message or non-REALTIME table
+        if (raw.includes("does not have tableType REALTIME") || raw.includes("not found") || raw.includes("404")) {
+          return `  ${table}: Not a REALTIME table (skipped)`;
+        }
+        return `  ${table}: Error fetching consuming info — ${raw.substring(0, 200)}`;
+      }
+    }
+
+    if (tableName) {
+      const result = await checkTable(tableName);
+      return `Ingestion status for ${tableName}:\n${result}`;
+    }
+
+    // No tableName — discover all tables, filter to REALTIME
+    const tablesRaw = await pinotFetch(controllerUrl("/tables"));
+    let tableNames: string[];
+    try {
+      const parsed = JSON.parse(tablesRaw);
+      tableNames = parsed.tables ?? [];
+    } catch {
+      return `Error listing tables: ${tablesRaw}`;
+    }
+
+    if (tableNames.length === 0) {
+      return "No tables found in cluster.";
+    }
+
+    const lines: string[] = [`Ingestion status report (checking ${tableNames.length} table(s) for REALTIME consumers):\n`];
+    let realtimeCount = 0;
+    let issuesFound = false;
+
+    for (const name of tableNames) {
+      const result = await checkTable(name);
+      if (!result.includes("Not a REALTIME table")) {
+        realtimeCount++;
+        if (result.includes("WARNING") || result.includes("STUCK")) {
+          issuesFound = true;
+        }
+      }
+      lines.push(result);
+    }
+
+    if (realtimeCount === 0) {
+      lines.push("\nNo REALTIME tables found — ingestion lag check not applicable.");
+    } else if (issuesFound) {
+      lines.push(`\nWARNING: Ingestion issues detected in one or more REALTIME tables.`);
+    } else {
+      lines.push(`\nAll ${realtimeCount} REALTIME table(s) consuming normally.`);
+    }
+
+    return lines.join("\n");
+  },
+);
+
+// 9. SQL query via broker
 export const pinotQuery = defineTool(
   "pinot_query",
   "Execute a read-only SQL query against Pinot via the broker. Only SELECT statements are allowed. Use for data-level health checks (row counts, freshness, null ratios).",
@@ -335,5 +452,169 @@ export const pinotQuery = defineTool(
     } finally {
       clearTimeout(timer);
     }
+  },
+);
+
+// 10. Component-level operational metrics
+export const pinotServerMetrics = defineTool(
+  "pinot_server_metrics",
+  "Collect operational metrics from Pinot components (controller, broker, server). Reports health status, response times, and key operational indicators like segment counts, routing table info, and error counts. Use to detect performance degradation or component-level issues beyond simple health checks.",
+  z.object({
+    component: z
+      .enum(["controller", "broker", "server", "all"])
+      .optional()
+      .default("all")
+      .describe('Which component to check: "controller", "broker", "server", or "all" (default)'),
+  }),
+  async ({ component }) => {
+    const sections: string[] = [];
+    const components =
+      component === "all"
+        ? (["controller", "broker", "server"] as const)
+        : ([component] as const);
+
+    for (const comp of components) {
+      const lines: string[] = [];
+
+      if (comp === "controller") {
+        lines.push("=== Controller Metrics ===");
+
+        // Health + response time
+        const healthStart = Date.now();
+        const healthResp = await pinotFetch(controllerUrl("/health"));
+        const healthLatency = Date.now() - healthStart;
+        lines.push(`Health: ${healthResp.trim()} (${healthLatency}ms)`);
+        if (healthLatency > 5000) lines.push("WARNING: Controller health response > 5s");
+
+        // Instance counts
+        const infoResp = await pinotFetch(controllerUrl("/instances"));
+        try {
+          const parsed = JSON.parse(infoResp);
+          const instances: string[] = parsed.instances ?? [];
+          const brokers = instances.filter((i) => i.startsWith("Broker_"));
+          const servers = instances.filter((i) => i.startsWith("Server_"));
+          const controllers = instances.filter((i) => i.startsWith("Controller_"));
+          lines.push(
+            `Instances: ${controllers.length} controller(s), ${brokers.length} broker(s), ${servers.length} server(s)`,
+          );
+        } catch {
+          lines.push(`Instances: unable to parse — ${infoResp.substring(0, 200)}`);
+        }
+
+        // Table count + segment summary via externalview
+        const tablesResp = await pinotFetch(controllerUrl("/tables"));
+        try {
+          const parsed = JSON.parse(tablesResp);
+          const tableNames: string[] = parsed.tables ?? [];
+          lines.push(`Tables: ${tableNames.length}`);
+
+          let totalSegments = 0;
+          let errorSegments = 0;
+          for (const tbl of tableNames) {
+            const extViewResp = await pinotFetch(
+              controllerUrl(`/tables/${tbl}/externalview`),
+              15_000,
+            );
+            try {
+              const extView = JSON.parse(extViewResp);
+              const segmentMap: Record<string, Record<string, string>> =
+                extView.OFFLINE ?? extView.REALTIME ?? {};
+              const segCount = Object.keys(segmentMap).length;
+              totalSegments += segCount;
+              for (const serverMap of Object.values(segmentMap)) {
+                for (const status of Object.values(serverMap)) {
+                  if (status === "ERROR") errorSegments++;
+                }
+              }
+            } catch {
+              // externalview not parseable, skip
+            }
+          }
+          lines.push(`Total segments across all tables: ${totalSegments}`);
+          if (errorSegments > 0) {
+            lines.push(`CRITICAL: ${errorSegments} segment(s) in ERROR state`);
+          } else {
+            lines.push("Segment errors: 0");
+          }
+        } catch {
+          lines.push(`Tables: unable to parse — ${tablesResp.substring(0, 200)}`);
+        }
+      }
+
+      if (comp === "broker") {
+        lines.push("=== Broker Metrics ===");
+
+        // Health + response time
+        const healthStart = Date.now();
+        const healthResp = await pinotFetch(brokerUrl("/health"));
+        const healthLatency = Date.now() - healthStart;
+        lines.push(`Health: ${healthResp.trim()} (${healthLatency}ms)`);
+        if (healthLatency > 5000) lines.push("WARNING: Broker health response > 5s");
+
+        // Routing table info
+        const routingResp = await pinotFetch(brokerUrl("/debug/routingTable"), 15_000);
+        try {
+          const parsed = JSON.parse(routingResp);
+          const tableKeys = Object.keys(parsed);
+          lines.push(`Routing tables: ${tableKeys.length}`);
+          for (const key of tableKeys) {
+            const entries = parsed[key];
+            if (Array.isArray(entries)) {
+              lines.push(`  ${key}: ${entries.length} routing entries`);
+            } else if (entries && typeof entries === "object") {
+              lines.push(
+                `  ${key}: ${Object.keys(entries as Record<string, unknown>).length} routing entries`,
+              );
+            }
+          }
+        } catch {
+          lines.push(`Routing table: ${routingResp.substring(0, 300)}`);
+        }
+
+        // Active queries
+        const queriesResp = await pinotFetch(brokerUrl("/debug/queries"), 10_000);
+        if (!queriesResp.startsWith("Error")) {
+          try {
+            const parsed = JSON.parse(queriesResp);
+            if (Array.isArray(parsed)) {
+              lines.push(`Active queries: ${parsed.length}`);
+            } else if (parsed && typeof parsed === "object") {
+              lines.push(
+                `Active queries info: ${JSON.stringify(parsed).substring(0, 300)}`,
+              );
+            }
+          } catch {
+            lines.push(`Active queries: ${queriesResp.substring(0, 200)}`);
+          }
+        }
+      }
+
+      if (comp === "server") {
+        lines.push("=== Server Metrics ===");
+
+        // Health + response time
+        const healthStart = Date.now();
+        const healthResp = await pinotFetch(serverUrl("/health/readiness"));
+        const healthLatency = Date.now() - healthStart;
+        lines.push(`Health: ${healthResp.trim()} (${healthLatency}ms)`);
+        if (healthLatency > 5000) lines.push("WARNING: Server health response > 5s");
+
+        // Tenant info via controller
+        const tenantsResp = await pinotFetch(controllerUrl("/tenants"), 10_000);
+        try {
+          const parsed = JSON.parse(tenantsResp);
+          const serverTenants: string[] = parsed.SERVER_TENANTS ?? [];
+          const brokerTenants: string[] = parsed.BROKER_TENANTS ?? [];
+          lines.push(`Server tenants: ${serverTenants.join(", ") || "none"}`);
+          lines.push(`Broker tenants: ${brokerTenants.join(", ") || "none"}`);
+        } catch {
+          lines.push(`Tenants: ${tenantsResp.substring(0, 200)}`);
+        }
+      }
+
+      sections.push(lines.join("\n"));
+    }
+
+    return sections.join("\n\n");
   },
 );
