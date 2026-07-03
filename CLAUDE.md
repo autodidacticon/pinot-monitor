@@ -9,20 +9,23 @@ Pinot Agent System is a multi-agent platform for autonomous monitoring and remed
 ## Commands
 
 ```bash
-npm install --legacy-peer-deps   # Install dependencies (--legacy-peer-deps required for zod v4)
-npm start                        # Run monitor on :3000
-npm run start:operator           # Run operator on :3002
-npm run start:mitigator          # Run mitigator on :3001
-npm run start:all                # Run all 3 services
-npm run typecheck                # Type-check all packages (tsc -b)
+pnpm install                     # Install dependencies
+pnpm start                       # Run monitor on :3000
+pnpm start:operator              # Run operator on :3002
+pnpm start:mitigator             # Run mitigator on :3001
+pnpm start:all                   # Run all 3 services
+pnpm typecheck                   # Type-check all packages (tsc -b)
+pnpm lint                        # Lint + format check (Biome)
+pnpm lint:fix                    # Auto-fix lint + format (Biome)
+pnpm test                        # Run unit tests (Vitest)
 docker build -t pinot-monitor .  # Build container image
 ```
 
-No test framework is configured. No linter is configured.
+Tests run with Vitest (`pnpm test`). Lint and format use Biome (`pnpm lint`).
 
 ## Architecture
 
-ES modules (`"type": "module"`), TypeScript with strict mode, target ES2022. npm workspaces monorepo.
+ES modules (`"type": "module"`), TypeScript with strict mode, target ES2022. pnpm workspaces monorepo.
 
 - Follow Domain-Driven Design with bounded contexts
 - Keep files under 500 lines
@@ -35,11 +38,12 @@ ES modules (`"type": "module"`), TypeScript with strict mode, target ES2022. npm
 
 **`packages/shared` (`@pinot-agents/shared`):**
 - `src/tools/registry.ts` — tool framework: `defineTool()`, `getToolSpecs()`, `getToolHandler()`. Zod schemas auto-convert to OpenAI function-calling JSON schemas.
+- `src/server.ts` — Fastify factory (`createServer`), `runWithTimeout`, and shared error handler.
 - `src/types/incident.ts` — `Incident` schema (severity, component, evidence, suggestedAction) and `IncidentReport` type.
 - `src/types/messages.ts` — inter-agent message protocol types (`AgentMessage`, typed payloads for incident/dispatch/verify/audit/alert).
 
 **`packages/monitor` (`@pinot-agents/monitor`):**
-- `src/index.ts` — bare `node:http` server with four routes (`/health`, `/sweep`, `/chat`, `/incidents`). Creates an OpenAI client pointed at Ollama.
+- `src/index.ts` — Fastify 5 server built via the shared `createServer` factory, with four routes (`/health`, `/sweep`, `/chat`, `/incidents`). Creates an OpenAI client pointed at Ollama.
 - `src/agent.ts` — iterative tool-calling loop. Sends messages to LLM, processes tool calls, repeats up to `maxTurns`.
 - `src/incidents.ts` — in-memory incident store. Parses structured incidents from LLM sweep responses.
 - `src/sessions.ts` — in-memory session Map with TTL (1 hour default), auto-purge every 10 minutes.
@@ -80,6 +84,7 @@ Monitor --incidents--> Operator --dispatch--> Mitigator --verify(chat)--> Monito
 - Environment variables override all config (see `src/config.ts` for defaults)
 - Uses `openai` npm package against any OpenAI-compatible `/v1` endpoint (Ollama, OpenAI, Groq, etc.)
 - LLM provider configured via `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` env vars (legacy `OLLAMA_*` still supported)
+- HTTP servers are built with Fastify 5 via `createServer()` from `@pinot-agents/shared`; request bodies are validated with Zod through `fastify-type-provider-zod`
 
 ## File Organization
 

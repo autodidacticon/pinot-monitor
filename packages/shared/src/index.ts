@@ -1,12 +1,8 @@
 // Tool framework
 
 export type { GracefulShutdownOptions, RateLimiterOptions } from './lifecycle.js';
-// Lifecycle utilities (graceful shutdown, request timeout, rate limiting)
-export {
-  registerGracefulShutdown,
-  SlidingWindowRateLimiter,
-  withTimeout,
-} from './lifecycle.js';
+// Lifecycle utilities (graceful shutdown, rate limiting)
+export { registerGracefulShutdown, SlidingWindowRateLimiter } from './lifecycle.js';
 // Metrics
 export { Counter, Gauge, Histogram, MetricsRegistry } from './metrics.js';
 export type { AppInstance, CreateServerOptions } from './server.js';
