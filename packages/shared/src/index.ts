@@ -9,6 +9,9 @@ export {
 } from './lifecycle.js';
 // Metrics
 export { Counter, Gauge, Histogram, MetricsRegistry } from './metrics.js';
+export type { AppInstance, CreateServerOptions } from './server.js';
+// Fastify server factory
+export { createServer, HandlerTimeoutError, runWithTimeout } from './server.js';
 export type { ToolDefinition, ToolHandler } from './tools/registry.js';
 export { defineTool, getToolHandler, getToolSpecs } from './tools/registry.js';
 // Incident types

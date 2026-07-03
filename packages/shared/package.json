@@ -8,6 +8,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "fastify": "^5.8.5",
+    "fastify-type-provider-zod": "^6.1.0",
     "openai": "^4.96.0",
     "zod": "^4.3.6"
   },
