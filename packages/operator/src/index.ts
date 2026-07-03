@@ -7,7 +7,7 @@ import { config } from "./config.js";
 import { matchRunbook } from "./runbooks/definitions.js";
 import { canAttempt, recordAttempt } from "./circuit-breaker.js";
 import { logAudit, getAuditLog } from "./audit.js";
-import { recordNovelIncident, getNovelIncidents, acknowledgeNovelIncident } from "./novel-incidents.js";
+import { recordNovelIncident, getNovelIncidents } from "./novel-incidents.js";
 import { persistAuditEntry } from "./audit-persistence.js";
 
 // Metrics

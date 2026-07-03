@@ -12,9 +12,14 @@
     "start:operator": "pnpm --filter @pinot-agents/operator start",
     "start:mitigator": "pnpm --filter @pinot-agents/mitigator start",
     "start:all": "pnpm --filter @pinot-agents/monitor start & pnpm --filter @pinot-agents/operator start & pnpm --filter @pinot-agents/mitigator start & wait",
-    "typecheck": "tsc -b packages/shared packages/monitor packages/operator packages/mitigator"
+    "typecheck": "tsc -b packages/shared packages/monitor packages/operator packages/mitigator",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.8",
     "@types/node": "^22.15.21",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
