@@ -1,5 +1,5 @@
-import type OpenAI from "openai";
-import { getToolHandler } from "@pinot-agents/shared";
+import { getToolHandler } from '@pinot-agents/shared';
+import type OpenAI from 'openai';
 
 export interface ToolCallLog {
   name: string;
@@ -23,7 +23,7 @@ export async function runAgentLoop(
   model: string,
   messages: OpenAI.ChatCompletionMessageParam[],
   tools: OpenAI.ChatCompletionTool[],
-  maxTurns: number,
+  maxTurns: number
 ): Promise<AgentLoopResult> {
   const toolCallLog: ToolCallLog[] = [];
 
@@ -38,13 +38,13 @@ export async function runAgentLoop(
 
     const choice = response.choices[0];
     if (!choice) {
-      throw new Error("No choice returned from model");
+      throw new Error('No choice returned from model');
     }
 
     const assistantMessage = choice.message;
     messages.push(assistantMessage);
 
-    if (choice.finish_reason === "tool_calls" || assistantMessage.tool_calls?.length) {
+    if (choice.finish_reason === 'tool_calls' || assistantMessage.tool_calls?.length) {
       const calls = assistantMessage.tool_calls ?? [];
 
       for (const toolCall of calls) {
@@ -54,7 +54,7 @@ export async function runAgentLoop(
         if (!handler) {
           console.error(`Unknown tool: ${name}`);
           messages.push({
-            role: "tool",
+            role: 'tool',
             tool_call_id: toolCall.id,
             content: `Error: unknown tool "${name}"`,
           });
@@ -68,11 +68,11 @@ export async function runAgentLoop(
         } catch {
           console.error(`Invalid JSON args for ${name}: ${toolCall.function.arguments}`);
           messages.push({
-            role: "tool",
+            role: 'tool',
             tool_call_id: toolCall.id,
-            content: "Error: invalid JSON arguments",
+            content: 'Error: invalid JSON arguments',
           });
-          toolCallLog.push({ name, args: {}, result: "Error: invalid JSON arguments" });
+          toolCallLog.push({ name, args: {}, result: 'Error: invalid JSON arguments' });
           continue;
         }
 
@@ -81,7 +81,7 @@ export async function runAgentLoop(
         try {
           const result = await handler(args);
           messages.push({
-            role: "tool",
+            role: 'tool',
             tool_call_id: toolCall.id,
             content: result,
           });
@@ -91,7 +91,7 @@ export async function runAgentLoop(
           console.error(`  ✗ ${name} failed: ${msg}`);
           const errorResult = `Error executing ${name}: ${msg}`;
           messages.push({
-            role: "tool",
+            role: 'tool',
             tool_call_id: toolCall.id,
             content: errorResult,
           });
@@ -103,19 +103,19 @@ export async function runAgentLoop(
     }
 
     // Model finished (stop or unexpected reason)
-    if (choice.finish_reason !== "stop") {
+    if (choice.finish_reason !== 'stop') {
       console.warn(`Unexpected finish_reason: ${choice.finish_reason}`);
     }
 
     return {
-      response: assistantMessage.content ?? "",
+      response: assistantMessage.content ?? '',
       toolCalls: toolCallLog,
     };
   }
 
   // Exhausted maxTurns
   return {
-    response: "Agent reached maximum turns without completing.",
+    response: 'Agent reached maximum turns without completing.',
     toolCalls: toolCallLog,
   };
 }

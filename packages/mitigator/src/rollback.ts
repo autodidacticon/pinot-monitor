@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto';
 
 export interface RollbackEntry {
   id: string;
@@ -16,7 +16,7 @@ export function recordAction(
   tool: string,
   args: Record<string, string>,
   beforeState: string,
-  undoAction: { tool: string; args: Record<string, string> } | null,
+  undoAction: { tool: string; args: Record<string, string> } | null
 ): RollbackEntry {
   const entry: RollbackEntry = {
     id: randomUUID(),
@@ -32,7 +32,7 @@ export function recordAction(
     rollbackLog.shift();
   }
 
-  console.log(JSON.stringify({ level: "rollback", ...entry }));
+  console.log(JSON.stringify({ level: 'rollback', ...entry }));
   return entry;
 }
 
@@ -40,7 +40,9 @@ export function getRollbackLog(): RollbackEntry[] {
   return [...rollbackLog];
 }
 
-export function getUndoAction(id: string): { tool: string; args: Record<string, string> } | null | undefined {
+export function getUndoAction(
+  id: string
+): { tool: string; args: Record<string, string> } | null | undefined {
   const entry = rollbackLog.find((e) => e.id === id);
   if (!entry) return undefined;
   return entry.undoAction;

@@ -4,7 +4,7 @@
  * - Request timeout middleware
  * - Rate limiting
  */
-import http from "node:http";
+import type http from 'node:http';
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 
@@ -52,8 +52,12 @@ export function registerGracefulShutdown(options: GracefulShutdownOptions): void
     console.log(`[${agentName}] Waiting up to ${forceTimeout}ms for in-flight requests...`);
   };
 
-  process.on("SIGTERM", () => { shutdown("SIGTERM"); });
-  process.on("SIGINT", () => { shutdown("SIGINT"); });
+  process.on('SIGTERM', () => {
+    shutdown('SIGTERM');
+  });
+  process.on('SIGINT', () => {
+    shutdown('SIGINT');
+  });
 }
 
 // ─── Request Timeout ─────────────────────────────────────────────────────────
@@ -64,15 +68,19 @@ export function registerGracefulShutdown(options: GracefulShutdownOptions): void
  * Returns an AbortSignal that the handler can check for early termination.
  */
 export function withTimeout(
-  handler: (req: http.IncomingMessage, res: http.ServerResponse, signal: AbortSignal) => Promise<void>,
-  timeoutMs: number,
+  handler: (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    signal: AbortSignal
+  ) => Promise<void>,
+  timeoutMs: number
 ): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> {
   return async (req, res) => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
       if (!res.headersSent) {
-        res.writeHead(504, { "Content-Type": "application/json" });
+        res.writeHead(504, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: `Request timed out after ${timeoutMs}ms` }));
       } else if (!res.writableEnded) {
         res.end();
