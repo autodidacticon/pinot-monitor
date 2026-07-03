@@ -46,7 +46,7 @@ export const kubectlEvents = defineTool(
       const lines = raw.trim().split('\n');
       const filtered = lines.filter((line) => {
         const tsMatch = line.match(/^(\S+)/);
-        if (!tsMatch) return false;
+        if (!tsMatch || tsMatch[1] === undefined) return false;
         const ts = new Date(tsMatch[1]);
         return !isNaN(ts.getTime()) && ts >= cutoff;
       });

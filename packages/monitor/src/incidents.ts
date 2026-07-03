@@ -86,8 +86,13 @@ export function parseIncidents(response: string): Incident[] {
     return extractFromReport(response);
   }
 
+  const jsonBlock = jsonBlockMatch[1];
+  if (jsonBlock === undefined) {
+    return extractFromReport(response);
+  }
+
   try {
-    const parsed = JSON.parse(jsonBlockMatch[1]);
+    const parsed = JSON.parse(jsonBlock);
     const raw = Array.isArray(parsed) ? parsed : parsed.incidents;
     if (!Array.isArray(raw)) return [];
     return raw.map(normalizeIncident).filter((i): i is Incident => validateIncident(i) !== null);
@@ -110,7 +115,7 @@ function extractFromReport(response: string): Incident[] {
   const issuesMatch = response.match(/── Issues ──+\n([\s\S]*?)(?=\n── |═{3,})/);
   if (!issuesMatch) return [];
 
-  const issuesText = issuesMatch[1].trim();
+  const issuesText = (issuesMatch[1] ?? '').trim();
   if (/none detected/i.test(issuesText)) return [];
 
   // Each line starting with - or * or a number is an issue

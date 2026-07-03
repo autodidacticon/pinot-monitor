@@ -120,7 +120,7 @@ export class SlidingWindowRateLimiter {
     const windowStart = now - this.windowMs;
 
     // Remove expired timestamps
-    while (this.timestamps.length > 0 && this.timestamps[0] <= windowStart) {
+    while (this.timestamps.length > 0 && (this.timestamps[0] ?? Infinity) <= windowStart) {
       this.timestamps.shift();
     }
 
@@ -135,7 +135,7 @@ export class SlidingWindowRateLimiter {
   /** Returns the number of remaining requests in the current window. */
   get remaining(): number {
     const windowStart = Date.now() - this.windowMs;
-    while (this.timestamps.length > 0 && this.timestamps[0] <= windowStart) {
+    while (this.timestamps.length > 0 && (this.timestamps[0] ?? Infinity) <= windowStart) {
       this.timestamps.shift();
     }
     return Math.max(0, this.maxRequests - this.timestamps.length);

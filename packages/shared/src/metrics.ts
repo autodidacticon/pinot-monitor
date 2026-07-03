@@ -83,8 +83,10 @@ export class Histogram {
     this.sum += value;
     this.count++;
     for (let i = 0; i < this.buckets.length; i++) {
-      if (value <= this.buckets[i]) {
-        this.bucketCounts[i]++;
+      const bucket = this.buckets[i];
+      const bucketCount = this.bucketCounts[i];
+      if (bucket !== undefined && bucketCount !== undefined && value <= bucket) {
+        this.bucketCounts[i] = bucketCount + 1;
       }
     }
   }
@@ -94,7 +96,7 @@ export class Histogram {
     const lines = [`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} histogram`];
     let cumulative = 0;
     for (let i = 0; i < this.buckets.length; i++) {
-      cumulative += this.bucketCounts[i];
+      cumulative += this.bucketCounts[i] ?? 0;
       const le = this.buckets[i];
       lines.push(`${this.name}_bucket${this.mergeLabelStr(labelStr, `le="${le}"`)} ${cumulative}`);
     }
