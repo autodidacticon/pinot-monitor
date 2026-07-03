@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import http from 'node:http';
 import type { Incident } from '@pinot-agents/shared';
 import {
+  createServer,
   Incident as IncidentSchema,
   MetricsRegistry,
   registerGracefulShutdown,
@@ -64,20 +64,6 @@ interface PendingApproval {
   status: 'pending' | 'approved' | 'rejected';
 }
 const pendingApprovals = new Map<string, PendingApproval>();
-
-function jsonResponse(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
-    req.on('error', reject);
-  });
-}
 
 async function dispatchToMitigator(
   incident: Incident,
@@ -459,37 +445,15 @@ async function triageIncident(incident: Incident): Promise<TriageResult> {
   };
 }
 
-async function handleIncident(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  if (!incidentRateLimiter.tryAcquire()) {
-    rateLimitRejections.inc();
-    console.warn(
-      `[rate-limit] Rejected POST /incident (remaining: ${incidentRateLimiter.remaining})`
-    );
-    res.writeHead(429, {
-      'Content-Type': 'application/json',
-      'Retry-After': String(Math.ceil(config.rateLimit.windowMs / 1000)),
-    });
-    res.end(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }));
-    return;
-  }
-
-  let body: {
-    from?: string;
-    type?: string;
-    payload?: { action?: string; runbookId?: string };
-    incidents?: Incident[];
-    incident?: Incident;
-  };
-  try {
-    body = JSON.parse(await readBody(req));
-  } catch {
-    jsonResponse(res, 400, { error: 'Invalid JSON body' });
-    return;
-  }
-
+async function handleIncident(body: {
+  from?: string;
+  type?: string;
+  payload?: { action?: string; runbookId?: string };
+  incidents?: Incident[];
+  incident?: Incident;
+}): Promise<{ status: number; body: unknown }> {
   // Handle audit callback from mitigator: clear active remediation for the component
   if (body.from === 'mitigator' && body.type === 'audit') {
-    // Find and clear the active remediation that matches the runbook
     const runbookId = body.payload?.runbookId;
     for (const [component, active] of activeRemediations) {
       if (active.runbookId === runbookId) {
@@ -500,14 +464,12 @@ async function handleIncident(req: http.IncomingMessage, res: http.ServerRespons
         break;
       }
     }
-    jsonResponse(res, 200, { received: true, type: 'audit' });
-    return;
+    return { status: 200, body: { received: true, type: 'audit' } };
   }
 
   const rawIncidents = body.incidents ?? (body.incident ? [body.incident] : []);
   if (rawIncidents.length === 0) {
-    jsonResponse(res, 400, { error: 'No incidents provided' });
-    return;
+    return { status: 400, body: { error: 'No incidents provided' } };
   }
 
   // Validate each incident at the system boundary
@@ -524,7 +486,6 @@ async function handleIncident(req: http.IncomingMessage, res: http.ServerRespons
       continue;
     }
     const incident = parsed.data;
-    // Additional business rule checks
     if (!incident.component.trim()) {
       validationErrors.push({ index: i, errors: ['component must be a non-empty string'] });
       continue;
@@ -537,11 +498,7 @@ async function handleIncident(req: http.IncomingMessage, res: http.ServerRespons
   }
 
   if (validIncidents.length === 0) {
-    jsonResponse(res, 400, {
-      error: 'All incidents failed validation',
-      validationErrors,
-    });
-    return;
+    return { status: 400, body: { error: 'All incidents failed validation', validationErrors } };
   }
 
   const results: TriageResult[] = [];
@@ -550,34 +507,26 @@ async function handleIncident(req: http.IncomingMessage, res: http.ServerRespons
     results.push(result);
   }
 
-  jsonResponse(res, 200, {
-    results,
-    ...(validationErrors.length > 0 ? { validationErrors } : {}),
-  });
+  return {
+    status: 200,
+    body: { results, ...(validationErrors.length > 0 ? { validationErrors } : {}) },
+  };
 }
 
-async function handleAuditLog(_req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  jsonResponse(res, 200, { entries: getAuditLog() });
-}
-
-async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  jsonResponse(res, 200, { ok: true, agent: 'operator' });
+function getAuditResponse() {
+  return { entries: getAuditLog() };
 }
 
 async function handleApproval(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
   approvalId: string,
   approve: boolean
-): Promise<void> {
+): Promise<{ status: number; body: unknown }> {
   const pending = pendingApprovals.get(approvalId);
   if (!pending) {
-    jsonResponse(res, 404, { error: 'Approval not found' });
-    return;
+    return { status: 404, body: { error: 'Approval not found' } };
   }
   if (pending.status !== 'pending') {
-    jsonResponse(res, 409, { error: `Already ${pending.status}` });
-    return;
+    return { status: 409, body: { error: `Already ${pending.status}` } };
   }
 
   pending.status = approve ? 'approved' : 'rejected';
@@ -602,63 +551,77 @@ async function handleApproval(
     };
     logAudit(entry);
     persistAuditEntry(entry);
-    jsonResponse(res, 200, { status: 'approved', dispatch: result });
-  } else {
-    const entry = {
-      timestamp: new Date().toISOString(),
-      agent: 'operator',
-      action: 'dispatch_rejected',
-      target: pending.incident.component,
-      inputSummary: `runbook=${pending.runbookId}, approvalId=${approvalId}`,
-      outputSummary: 'Rejected by human',
-      correlationId: pending.correlationId,
-    };
-    logAudit(entry);
-    persistAuditEntry(entry);
-    jsonResponse(res, 200, { status: 'rejected' });
+    return { status: 200, body: { status: 'approved', dispatch: result } };
   }
+
+  const entry = {
+    timestamp: new Date().toISOString(),
+    agent: 'operator',
+    action: 'dispatch_rejected',
+    target: pending.incident.component,
+    inputSummary: `runbook=${pending.runbookId}, approvalId=${approvalId}`,
+    outputSummary: 'Rejected by human',
+    correlationId: pending.correlationId,
+  };
+  logAudit(entry);
+  persistAuditEntry(entry);
+  return { status: 200, body: { status: 'rejected' } };
 }
-
-const server = http.createServer(async (req, res) => {
-  const { method, url } = req;
-  const path = url?.split('?')[0];
-
-  try {
-    if (method === 'GET' && path === '/health') {
-      await handleHealth(req, res);
-    } else if (method === 'POST' && path === '/incident') {
-      await handleIncident(req, res);
-    } else if (method === 'GET' && path === '/audit') {
-      await handleAuditLog(req, res);
-    } else if (method === 'GET' && path === '/metrics') {
-      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
-      res.end(metrics.toPrometheus());
-    } else if (method === 'GET' && path === '/novel-incidents') {
-      jsonResponse(res, 200, { incidents: getNovelIncidents() });
-    } else if (method === 'GET' && path === '/pending-approvals') {
-      const pending = Array.from(pendingApprovals.values()).filter((a) => a.status === 'pending');
-      jsonResponse(res, 200, { approvals: pending });
-    } else if (method === 'POST' && path?.startsWith('/approve/')) {
-      const id = path.slice('/approve/'.length);
-      await handleApproval(req, res, id, true);
-    } else if (method === 'POST' && path?.startsWith('/reject/')) {
-      const id = path.slice('/reject/'.length);
-      await handleApproval(req, res, id, false);
-    } else {
-      jsonResponse(res, 404, { error: 'Not found' });
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`Unhandled error: ${msg}`);
-    if (!res.headersSent) {
-      jsonResponse(res, 500, { error: 'Internal server error' });
-    }
-  }
-});
 
 const TRUST_LABELS = ['observe', 'suggest', 'approve', 'auto-remediate'] as const;
 
-server.listen(config.server.port, () => {
+const app = createServer({ agentName: 'operator' });
+
+app.get('/health', async () => ({ ok: true, agent: 'operator' }));
+
+app.post(
+  '/incident',
+  {
+    preHandler: async (_request, reply) => {
+      if (!incidentRateLimiter.tryAcquire()) {
+        rateLimitRejections.inc();
+        console.warn(
+          `[rate-limit] Rejected POST /incident (remaining: ${incidentRateLimiter.remaining})`
+        );
+        reply.header('Retry-After', String(Math.ceil(config.rateLimit.windowMs / 1000)));
+        return reply.status(429).send({ error: 'Rate limit exceeded. Try again later.' });
+      }
+    },
+  },
+  async (request, reply) => {
+    const result = await handleIncident(
+      (request.body ?? {}) as Parameters<typeof handleIncident>[0]
+    );
+    reply.status(result.status).send(result.body);
+  }
+);
+
+app.get('/audit', async () => getAuditResponse());
+
+app.get('/metrics', async (_request, reply) => {
+  reply.header('Content-Type', 'text/plain; version=0.0.4').send(metrics.toPrometheus());
+});
+
+app.get('/novel-incidents', async () => ({ incidents: getNovelIncidents() }));
+
+app.get('/pending-approvals', async () => ({
+  approvals: Array.from(pendingApprovals.values()).filter((a) => a.status === 'pending'),
+}));
+
+app.post('/approve/:id', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const result = await handleApproval(id, true);
+  reply.status(result.status).send(result.body);
+});
+
+app.post('/reject/:id', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const result = await handleApproval(id, false);
+  reply.status(result.status).send(result.body);
+});
+
+const start = async () => {
+  await app.listen({ port: config.server.port, host: '0.0.0.0' });
   console.log(`Operator service listening on port ${config.server.port}`);
   console.log(`Trust level: ${config.trustLevel} (${TRUST_LABELS[config.trustLevel]})`);
   console.log(`Rate limit: ${config.rateLimit.maxRequests} req/${config.rateLimit.windowMs}ms`);
@@ -668,10 +631,11 @@ server.listen(config.server.port, () => {
   console.log(
     'Routes: GET /health, POST /incident, GET /audit, GET /metrics, GET /novel-incidents, GET /pending-approvals, POST /approve/:id, POST /reject/:id'
   );
-});
+};
+start();
 
 registerGracefulShutdown({
-  server,
+  server: app.server,
   agentName: 'operator',
   forceTimeout: config.shutdownTimeoutMs,
 });
