@@ -14,12 +14,14 @@ A multi-agent platform for autonomous monitoring and remediation of Apache Pinot
 
 ## Prerequisites
 
-### 1. Node.js
+### 1. Node.js and pnpm
 
-Node.js 20+ is required.
+Node.js 22+ is required (pinned in `.nvmrc`), and the repo uses [pnpm](https://pnpm.io) (version pinned via the `packageManager` field).
 
 ```bash
-node --version  # v20.x or higher
+node --version    # v22.x or higher
+corepack enable   # provides the pinned pnpm automatically
+pnpm --version    # 10.x
 ```
 
 ### 2. Kubernetes Cluster
@@ -71,7 +73,7 @@ curl http://localhost:11434/api/tags
 
 No further configuration needed — the defaults point to Ollama at `localhost:11434`.
 
-**Alternative local models** (ranked by tool-calling quality):
+**Alternative local models** (ranked by tool-calling quality when benchmarked during development; any newer Ollama model with solid tool calling also works):
 
 | Model | Ollama ID | RAM | Notes |
 |-------|-----------|-----|-------|
@@ -80,53 +82,53 @@ No further configuration needed — the defaults point to Ollama at `localhost:1
 | Devstral Small 2 | `devstral-small-2` | ~15 GB | Mistral's agentic coding model |
 | Qwen3 32B | `qwen3:32b` | ~20 GB | Good quality but slower |
 
-#### Option B: OpenAI
+#### Option B: Anthropic
+
+Anthropic's API exposes an OpenAI-compatible endpoint, so no proxy is needed:
+
+```bash
+export LLM_BASE_URL=https://api.anthropic.com/v1
+export LLM_MODEL=claude-sonnet-5
+export LLM_API_KEY=sk-ant-...
+```
+
+Use `claude-haiku-4-5-20251001` for a faster/cheaper option, or `claude-opus-4-8` for the strongest tool calling.
+
+#### Option C: OpenAI
 
 ```bash
 export LLM_BASE_URL=https://api.openai.com/v1
-export LLM_MODEL=gpt-4o
+export LLM_MODEL=gpt-5.1
 export LLM_API_KEY=sk-...
-```
-
-#### Option C: Anthropic (via OpenRouter)
-
-```bash
-export LLM_BASE_URL=https://openrouter.ai/api/v1
-export LLM_MODEL=anthropic/claude-sonnet-4-20250514
-export LLM_API_KEY=sk-or-...
 ```
 
 #### Option D: Groq
 
 ```bash
 export LLM_BASE_URL=https://api.groq.com/openai/v1
-export LLM_MODEL=llama-3.3-70b-versatile
+export LLM_MODEL=meta-llama/llama-4-maverick-17b-128e-instruct
 export LLM_API_KEY=gsk_...
 ```
 
-#### Option E: Together
+#### Option E: Any other OpenAI-compatible provider
 
-```bash
-export LLM_BASE_URL=https://api.together.xyz/v1
-export LLM_MODEL=meta-llama/Llama-3.3-70B-Instruct-Turbo
-export LLM_API_KEY=...
-```
+Together, OpenRouter, Fireworks, vLLM, etc. all work the same way — point `LLM_BASE_URL` at the provider's `/v1` endpoint and set `LLM_MODEL`/`LLM_API_KEY` to a model with tool-calling support.
 
 ## Quick Start
 
 ### Local Development
 
 ```bash
-npm install --legacy-peer-deps
-npm run start:all    # Run all 3 services
+pnpm install
+pnpm start:all    # Run all 3 services
 ```
 
 Or run individually:
 
 ```bash
-npm start                # Monitor on :3000
-npm run start:operator   # Operator on :3002
-npm run start:mitigator  # Mitigator on :3001
+pnpm start                # Monitor on :3000
+pnpm start:operator       # Operator on :3002
+pnpm start:mitigator      # Mitigator on :3001
 ```
 
 Verify agents are healthy:
@@ -235,8 +237,8 @@ helm uninstall pinot-agents -n pinot
 
 The chart deploys:
 - **Monitor** — Deployment + ClusterIP Service + read-only RBAC (ServiceAccount + ClusterRole + ClusterRoleBinding)
-- **Operator** — Deployment + ClusterIP Service + ServiceAccount
-- **Mitigator** — Deployment + ClusterIP Service + write-capable RBAC
+- **Operator** — Deployment + ClusterIP Service + read-only RBAC (shares the read-only ClusterRole)
+- **Mitigator** — Deployment + ClusterIP Service + write-capable RBAC (read rules plus `pods delete` and `pods/exec create`)
 - **CronJob** — triggers `/sweep` on the monitor at the configured interval
 
 ### Kubernetes (plain manifests)
@@ -251,7 +253,7 @@ This creates a Monitor-only deployment with read-only RBAC and a sweep CronJob.
 
 ## LLM Provider Configuration
 
-All agents use the same env vars. Set per-agent by configuring each service's environment independently.
+The Monitor and Mitigator use the same env vars (the Operator is deterministic and takes none). Set per-agent by configuring each service's environment independently.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -268,11 +270,13 @@ Each agent can use a different model. In Kubernetes, set env vars per container.
 ```yaml
 monitor:
   llm:
-    model: "gpt-4o-mini"     # Fast, cheap for observation
+    model: "claude-haiku-4-5-20251001"  # Fast, cheap for observation
 mitigator:
   llm:
-    model: "gpt-4o"          # Strong tool-calling for remediation
+    model: "claude-sonnet-5"            # Strong tool-calling for remediation
 ```
+
+The Operator takes no LLM configuration — it is a deterministic rules engine.
 
 ## Monitor API
 
@@ -307,6 +311,9 @@ curl -N http://localhost:3000/watch
 
 ### `GET /history`
 Retrieve past sweep results. Optional `?hours=N` parameter (default 24h).
+
+### `GET /metrics`
+Prometheus-format metrics.
 
 ## Operator API
 
@@ -353,6 +360,8 @@ Prometheus-format metrics.
 | `pinot_query` | Execute read-only SQL queries via broker |
 | `pinot_table_size` | Get storage size per table with threshold alerts |
 | `pinot_broker_latency` | Probe query latency across tables |
+| `pinot_ingestion_status` | Check consuming-segment status and ingestion lag for REALTIME tables |
+| `pinot_server_metrics` | Operational metrics per component (health latency, instance/table/segment counts) |
 
 ## Runbooks
 
@@ -365,6 +374,7 @@ Prometheus-format metrics.
 | `high_restart_count` | Elevated restart count (WARNING) | 1 (suggest) | Describe pod for diagnostics |
 | `storage_pressure` | High storage/quota usage (WARNING+) | 2 (approve) | Rebalance table |
 | `query_overload` | High query latency (WARNING+) | 1 (suggest) | Describe broker for diagnostics |
+| `ingestion_lag` | Consumer lag / stuck REALTIME ingestion (WARNING+) | 1 (suggest) | Describe server for diagnostics |
 
 ## Trust Levels
 
@@ -411,21 +421,35 @@ Prometheus-format metrics.
 | `PINOT_MONITOR_BROKER_HOST` | `pinot-broker.pinot.svc.cluster.local` | Pinot broker host |
 | `PINOT_MONITOR_BROKER_PORT` | `8099` | Pinot broker port |
 
+## Development
+
+```bash
+pnpm typecheck    # Type-check all packages (tsc -b, project references)
+pnpm lint         # Lint + format check (Biome)
+pnpm lint:fix     # Auto-fix lint + format
+pnpm test         # Unit tests (Vitest)
+pnpm test:watch   # Vitest watch mode
+```
+
+TypeScript (ESNext, strict, shared `tsconfig.base.json`), Biome for lint/format, Vitest for tests. All three HTTP servers are Fastify 5 instances built by the shared `createServer()` factory in `@pinot-agents/shared`, with Zod request validation via `fastify-type-provider-zod`. Services run from `.ts` source via `tsx` — no build step. CI (GitHub Actions) runs lint + typecheck + tests on pushes to `main` and all PRs.
+
 ## Project Structure
 
 ```
 packages/
-├── shared/          # Tool framework, incident schema, metrics, lifecycle utilities
-├── monitor/         # Read-only observer agent (11 tools)
-├── operator/        # Deterministic rules engine (7 runbooks)
-└── mitigator/       # Write-capable remediation agent (rollback, blast radius)
+├── shared/          # Tool framework, incident schema, metrics, Fastify server factory, lifecycle utilities
+├── monitor/         # Read-only observer agent (12 tools)
+├── operator/        # Deterministic rules engine (8 runbooks)
+└── mitigator/       # Write-capable remediation agent (7 tools; rollback, blast radius)
 k8s/
 ├── deploy.yaml      # Plain manifest (monitor-only)
 ├── job.yaml         # One-shot test Job
 └── helm/
     └── pinot-agents/  # Full Helm chart (all 3 agents + RBAC + CronJob)
 docs/
+├── architect-todo.md          # Implementation progress and open follow-ups
+├── k8s-setup.md               # Cluster + Pinot setup walkthrough
 ├── test-scenarios.md          # 40 QC test scenarios with results
-├── architect-todo.md          # Implementation progress
+├── testing-plan.md            # Historical testing strategy
 └── operational-best-practices.md  # Ops research and gap analysis
 ```
