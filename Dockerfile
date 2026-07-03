@@ -20,7 +20,7 @@ COPY packages/operator/package.json packages/operator/
 COPY packages/mitigator/package.json packages/mitigator/
 RUN pnpm install --frozen-lockfile
 
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
 COPY packages/monitor/ packages/monitor/
 COPY packages/operator/ packages/operator/

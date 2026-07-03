@@ -28,6 +28,15 @@ describe('createServer', () => {
     expect(res.json()).toEqual({ error: 'Internal server error' });
     await app.close();
   });
+
+  it('renders unknown routes as 404 { error: "Not found" }', async () => {
+    const app = createServer({ agentName: 'test', logger: false });
+    app.get('/known', async () => ({ ok: true }));
+    const res = await app.inject({ method: 'GET', url: '/unknown' });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: 'Not found' });
+    await app.close();
+  });
 });
 
 describe('runWithTimeout', () => {

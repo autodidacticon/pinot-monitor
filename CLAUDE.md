@@ -25,7 +25,7 @@ Tests run with Vitest (`pnpm test`). Lint and format use Biome (`pnpm lint`).
 
 ## Architecture
 
-ES modules (`"type": "module"`), TypeScript with strict mode, target ES2022. pnpm workspaces monorepo.
+ES modules (`"type": "module"`), TypeScript with strict mode, target ESNext. pnpm workspaces monorepo.
 
 - Follow Domain-Driven Design with bounded contexts
 - Keep files under 500 lines

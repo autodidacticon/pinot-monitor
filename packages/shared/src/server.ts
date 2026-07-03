@@ -42,12 +42,20 @@ export function createServer(options: CreateServerOptions) {
       return;
     }
     // Zod schema-validation failures and malformed JSON bodies both surface here.
-    if (error.validation || error.statusCode === 400) {
+    if (error.validation) {
       reply.status(400).send({ error: error.message });
+      return;
+    }
+    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+      reply.status(error.statusCode).send({ error: error.message });
       return;
     }
     request.log.error(error, `[${options.agentName}] Unhandled error`);
     reply.status(500).send({ error: 'Internal server error' });
+  });
+
+  app.setNotFoundHandler((_request, reply) => {
+    reply.status(404).send({ error: 'Not found' });
   });
 
   return app;
