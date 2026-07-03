@@ -1,5 +1,7 @@
 # Apache Pinot K8s Monitoring Agent — Implementation Plan
 
+> **Status (2026-07):** Historical document. This is the original implementation plan; the system it describes has been built and since modernized (pnpm, Biome, Vitest, Fastify 5, three agents, 12 monitor tools). Commands and defaults below reflect the state at planning time. See README.md, CLAUDE.md, and docs/architect-todo.md for current state.
+
 ## Context
 
 We need a monitoring agent for an Apache Pinot cluster on Kubernetes. Pinot is not yet deployed, so we start with a Phase 0 (deploy Pinot) followed by Phase 1 (build the monitoring agent using the Claude Agent SDK in TypeScript). Alerts go to stdout/logs only in Phase 1.
@@ -72,10 +74,12 @@ The agent runs as a single monitoring sweep per invocation, using custom MCP too
   npm install -D typescript @types/node tsx
   ```
   Set `"type": "module"` in package.json (SDK uses ESM).
+  *(Not adopted as written: the implementation uses the `openai` package with a `defineTool()` registry instead of `@anthropic-ai/claude-agent-sdk`, and the repo is now a pnpm workspaces monorepo. To install today: `corepack enable && pnpm install`.)*
 
 - [x] **1.2** — `src/config.ts`
   Centralized config with env var overrides. Defaults use K8s service DNS names (e.g., `pinot-controller.pinot.svc.cluster.local:9000`). Service names updated after Phase 0.4 if they differ.
   Settings: `AGENT_MODEL` (default `claude-sonnet-4-6`), `AGENT_MAX_TURNS` (15), `AGENT_MAX_BUDGET_USD` (0.50).
+  *(Current config uses `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY`, default model `glm-4.7-flash` on Ollama.)*
 
 - [x] **1.3** — `src/tools/kubectl.ts`
   Single tool: **`kubectl_get`**
@@ -107,6 +111,7 @@ The agent runs as a single monitoring sweep per invocation, using custom MCP too
   4. **Rules**: Only use MCP tools, no mutations, report failures rather than retrying excessively
 
 - [x] **1.6** — `src/index.ts`
+  *(Not adopted as written: there is no MCP server. The implementation registers tools via `defineTool()` in `packages/shared/src/tools/registry.ts` and calls the LLM through the `openai` package; the Monitor now has 12 tools.)*
   Entry point that:
   1. Creates MCP server via `createSdkMcpServer()` with all 6 tools
   2. Calls `query()` with system prompt, `permissionMode: "bypassPermissions"`, `tools: []`, `allowedTools: ["mcp__pinot-monitor__*"]`
@@ -115,7 +120,7 @@ The agent runs as a single monitoring sweep per invocation, using custom MCP too
   5. Prints run summary (duration) and the health report to stdout
 
 - [x] **1.7** — `Dockerfile`
-  `node:22-slim` base, installs kubectl, copies source, runs via `npx tsx src/index.ts`.
+  `node:22-slim` base, installs kubectl, copies source, runs via `npx tsx src/index.ts`. *(Now runs `pnpm start`.)*
 
 - [x] **1.8** — `k8s/cronjob.yaml` (optional, for later deployment)
   - CronJob running every 30 minutes
@@ -130,8 +135,9 @@ The agent runs as a single monitoring sweep per invocation, using custom MCP too
   kubectl -n pinot port-forward svc/pinot-broker 8099:8099 &
   kubectl -n pinot port-forward svc/pinot-server 8097:80 &
   export PINOT_CONTROLLER_HOST=localhost PINOT_BROKER_HOST=localhost PINOT_SERVER_HOST=localhost
-  export ANTHROPIC_API_KEY=<key-with-credits>
-  npx tsx src/index.ts
+  # Optional: defaults to local Ollama with glm-4.7-flash. For a cloud provider:
+  export LLM_BASE_URL=https://api.anthropic.com/v1 LLM_MODEL=claude-sonnet-5 LLM_API_KEY=<key>
+  pnpm start
   ```
   - [ ] Agent starts without errors
   - [ ] Agent calls kubectl_get and receives pod data
@@ -142,6 +148,8 @@ The agent runs as a single monitoring sweep per invocation, using custom MCP too
 ---
 
 ## Phase 2: OpenClaw External Ollama Configuration
+
+> Note (2026-07): This phase configured OpenClaw, not the pinot-monitor agents. The `qwen3:32b` snippets below are historical; the agents' own default model is now `glm-4.7-flash`, configured via `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` (Helm values: `global.llm.*`).
 
 - [x] **2.1** — Ollama provider config
   Updated `openclaw-instance.yaml` to route requests to host-external Ollama:

@@ -57,11 +57,11 @@
 - [ ] Exercise the 504 `HandlerTimeoutError` path through a real Fastify route in tests
 - [ ] Unit tests for mitigator `GET /rollback` and `GET /metrics` (currently smoke-tested only)
 - [ ] Suppress the 13 intentional `noTemplateCurlyInString` warnings on runbook `${pod}`/`${table}` placeholder strings (scoped `biome-ignore` or a Biome override)
-- [ ] Helm templates still launch via `npm start` / `npm run start:*` — works because the image runs `corepack enable`, but switch to `pnpm` for coherence with the Dockerfile CMD
-- [ ] `k8s/deploy.yaml` still sets legacy `OLLAMA_BASE_URL`/`OLLAMA_MODEL` env vars — switch to `LLM_*` (legacy fallback still supported)
+- [x] Helm templates now launch via `pnpm start` / `pnpm run start:*` (was `npm`, which only worked because the image runs `corepack enable`)
+- [x] `k8s/deploy.yaml` now sets `LLM_BASE_URL`/`LLM_MODEL` (was legacy `OLLAMA_*`; fallback still supported in code)
 - [ ] Runbook action arg names (`table`, `segment`, `selector`) don't match the mitigator tool schemas (`tableName`, `segmentName`; `kubectl_delete` rejects selectors) — they act as LLM hints today; align them
 - [ ] Consider pinning an exact Node patch across `.nvmrc`/Dockerfile (currently floating 22.x)
-- [ ] Historical docs (`docs/testing-plan.md`, `docs/k8s-setup.md`, `EVOLUTION.md`, `pinot-monitor-plan.md`) still reference npm/`--legacy-peer-deps`/qwen3 defaults/`withTimeout` — annotate or refresh if they're still load-bearing
+- [x] Historical docs refreshed (2026-07): `docs/testing-plan.md` and `docs/k8s-setup.md` corrected to real commands/Helm keys/CI; `EVOLUTION.md`, `pinot-monitor-plan.md`, `docs/operational-best-practices.md` given status banners with misleading specifics annotated; `docs/test-scenarios.md` withTimeout note added. Remaining qwen3/npm mentions are deliberate history (QC run records, original plan text)
 
 ## QC Test Results (latest run)
 - TS-001 through TS-024: ALL PASS

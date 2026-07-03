@@ -850,6 +850,8 @@ This is expected behavior for long-running LLM requests. The sweep was making as
 
 **Recommendation:** For production deployment, the `withTimeout` wrapper's AbortSignal could be used to propagate shutdown to in-flight sweep loops, allowing the sweep to terminate early and return a partial result. Currently the sweep ignores the abort signal from graceful shutdown.
 
+> **Note (2026-07):** `withTimeout` has since been removed. The current timeout mechanism is `runWithTimeout` plus `HandlerTimeoutError` (rendered as a 504) in `packages/shared/src/server.ts`.
+
 **Conclusion:** Graceful shutdown works correctly at the HTTP layer (stops new connections, waits for existing ones). However, long-running LLM-backed requests (sweeps) will always hit the force timeout because the LLM API calls are not cancellable. The 30s force timeout is a reasonable safety net.
 
 ---

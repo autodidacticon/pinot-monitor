@@ -1,5 +1,7 @@
 # Pinot Agent System — Integration & Load Test Plan
 
+> **Status (2026-07):** Partially implemented. Vitest 4 is configured and runs the unit suite (34 tests, collocated as `packages/*/src/**/*.test.ts`, `pnpm test`), and CI at `.github/workflows/ci.yml` runs lint, typecheck, and tests on every push to `main` and all PRs. The integration, load, and chaos suites described below have not been built yet and remain the plan of record. Commands and config in this doc have been updated to match the current repo (pnpm, Biome, Fastify 5, `glm-4.7-flash` default model).
+
 ## Table of Contents
 
 1. [Test Infrastructure Setup](#test-infrastructure-setup)
@@ -24,8 +26,8 @@
 ### Installation
 
 ```bash
-# Vitest (integration + unit tests)
-npm install -D vitest @vitest/coverage-v8 --legacy-peer-deps
+# Vitest is already installed and configured (root devDependency, vitest.config.ts)
+pnpm install
 
 # k6 (load tests — installed globally via brew)
 brew install k6
@@ -61,38 +63,39 @@ tests/
 
 ### Vitest Configuration
 
-Add to `package.json` (root):
+Already in place. Root `package.json` scripts:
 
 ```json
 {
   "scripts": {
     "test": "vitest run",
-    "test:integration": "vitest run --dir tests/integration",
     "test:watch": "vitest"
   }
 }
 ```
 
-Create `vitest.config.ts` at the project root:
+`vitest.config.ts` at the project root currently includes only the collocated unit tests:
 
 ```ts
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['tests/**/*.test.ts'],
-    testTimeout: 60_000, // LLM calls can be slow
-    hookTimeout: 30_000,
     globals: true,
+    environment: 'node',
+    pool: 'forks',
+    include: ['packages/*/src/**/*.test.ts'],
   },
 });
 ```
 
+When the integration suite lands, add `tests/**/*.test.ts` to `include` behind a separate `test:integration` script (that script does not exist yet) with generous timeouts (`testTimeout: 60_000`, `hookTimeout: 30_000`) since the LLM is in the loop.
+
 ### Prerequisites for Running Tests
 
-- All 3 agents running (`npm run start:all`) or started in `beforeAll`
+- All 3 agents running (`pnpm start:all`) or started in `beforeAll`
 - A Pinot cluster accessible (OrbStack / kind / minikube with Helm release `pinot` in namespace `pinot`)
-- Ollama running at `localhost:11434` with `qwen3:32b` loaded (for LLM-dependent tests)
+- Ollama running at `localhost:11434` with `glm-4.7-flash` loaded, or any OpenAI-compatible endpoint via `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` (for LLM-dependent tests)
 - `DRY_RUN=true` for Mitigator (default)
 
 ---
@@ -242,6 +245,8 @@ describe('Agent Health Checks', () => {
 Runbooks (5) x Trust Levels (4) = 20 combinations
 ```
 
+> Note (2026-07): the Operator now has 8 runbooks (`query_overload`, `ingestion_lag`, and `storage_pressure` were added after this plan was written), so a full matrix today is 8 x 4 = 32 cases.
+
 Each combination sends a matching incident to the Operator with the given trust level and asserts the response `action` field and whether a dispatch was issued.
 
 ```ts
@@ -383,22 +388,22 @@ export const options = {
 
 | Scenario | Agent | Provider | Model |
 |----------|-------|----------|-------|
-| A | Monitor /chat | Ollama local | qwen3:32b |
+| A | Monitor /chat | Ollama local | glm-4.7-flash (default) |
 | B | Monitor /chat | Ollama local | qwen3:235b-a22b |
-| C | Mitigator /dispatch | Ollama local | qwen3:32b |
+| C | Mitigator /dispatch | Ollama local | glm-4.7-flash (default) |
 
 ```js
 export const options = {
   scenarios: {
-    monitor_chat_32b: {
+    monitor_chat_default: {
       executor: 'per-vu-iterations',
       vus: 3,
       iterations: 10,
-      env: { TARGET: 'http://localhost:3000/chat', MODEL: 'qwen3:32b' },
+      env: { TARGET: 'http://localhost:3000/chat', MODEL: 'glm-4.7-flash' },
     },
   },
   thresholds: {
-    'http_req_duration{scenario:monitor_chat_32b}': ['p(95)<60000'],
+    'http_req_duration{scenario:monitor_chat_default}': ['p(95)<60000'],
   },
 };
 ```
@@ -487,7 +492,7 @@ DISPATCH=$(curl -s -X POST http://localhost:3001/dispatch \
   -d '{"runbook":"pod_crashloop","component":"pinot-server-0","namespace":"pinot","evidence":"test"}')
 echo "$DISPATCH" | jq .
 
-echo "Done. Restart Operator manually: npm run start:operator"
+echo "Done. Restart Operator manually: pnpm start:operator"
 ```
 
 **Pass criteria:**
@@ -632,51 +637,27 @@ export async function postDispatch(dispatch: unknown) {
 
 ## CI/CD Integration
 
-### GitHub Actions Workflow (suggested)
+### GitHub Actions workflow
 
-```yaml
-name: Integration Tests
-on:
-  push:
-    branches: [main]
-  pull_request:
+CI is implemented at `.github/workflows/ci.yml`. It runs on pushes to `main` and on all pull requests (with concurrency cancellation of superseded runs):
 
-jobs:
-  integration:
-    runs-on: ubuntu-latest
-    services:
-      ollama:
-        # Use a pre-built Ollama image or skip LLM tests in CI
-        image: ollama/ollama:latest
-        ports:
-          - 11434:11434
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install --legacy-peer-deps
-      - run: npm run typecheck
-      - run: npm run start:all &
-      - run: sleep 10  # Wait for agents to start
-      - run: npm test
+1. `pnpm/action-setup` + `actions/setup-node` with `node-version-file: .nvmrc` (Node 22) and pnpm caching
+2. `pnpm install --frozen-lockfile`
+3. `pnpm lint` (Biome)
+4. `pnpm typecheck`
+5. `pnpm test` (Vitest unit suite; no cluster or LLM required)
 
-  load:
-    runs-on: ubuntu-latest
-    needs: integration
-    steps:
-      - uses: actions/checkout@v4
-      - uses: grafana/setup-k6-action@v1
-      - run: k6 run tests/load/operator-flood.k6.js
-      # Skip LLM-dependent load tests in CI (too slow without GPU)
-```
+The integration and load suites in this plan are not wired into CI yet. When they are, run the Operator flood test (no LLM dependency) in a separate job via `grafana/setup-k6-action`, and keep LLM-dependent tests out of CI (too slow without a GPU).
 
 ### Running Locally
 
 ```bash
-# Integration tests (requires all agents running + Pinot cluster + Ollama)
-npm run start:all &
-npm run test:integration
+# Unit tests (no agents, cluster, or LLM required)
+pnpm test
+
+# Integration tests (planned; there is no test:integration script yet)
+pnpm start:all &
+pnpm vitest run --dir tests/integration
 
 # Load tests
 k6 run tests/load/monitor-sweep.k6.js
@@ -696,7 +677,7 @@ bash tests/chaos/llm-unavailable.sh
 |----------|--------|--------|
 | Integration | All health checks pass | 100% |
 | Integration | Sweep returns valid incident schema | 100% |
-| Integration | All 20 trust-level matrix cases pass | 100% |
+| Integration | All trust-level matrix cases pass (8 runbooks x 4 levels = 32) | 100% |
 | Integration | Circuit breaker trips at maxRetries | 100% |
 | Integration | E2E loop completes within 120s | 100% |
 | Load | Operator p95 latency | < 500ms |
