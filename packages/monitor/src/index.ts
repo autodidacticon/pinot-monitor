@@ -1,12 +1,23 @@
-import http from 'node:http';
+import type { ServerResponse } from 'node:http';
+import type { Incident, Severity } from '@pinot-agents/shared';
 import {
+  createServer,
   getToolSpecs,
   MetricsRegistry,
   registerGracefulShutdown,
-  withTimeout,
+  runWithTimeout,
 } from '@pinot-agents/shared';
 import OpenAI from 'openai';
+import { z } from 'zod';
 import { config } from './config.js';
+// Import tool files to trigger registration via defineTool()
+import './tools/kubectl.js';
+import './tools/pinot-api.js';
+import { runAgentLoop } from './agent.js';
+import { getIncidents, parseIncidents, storeIncidents } from './incidents.js';
+import { MONITOR_SYSTEM_PROMPT } from './prompts/monitor.js';
+import { getOrCreateSession, purgeExpired, sessionCount } from './sessions.js';
+import { getSweepHistory, getTrendSummary, recordSweep } from './sweep-history.js';
 
 const metrics = new MetricsRegistry();
 const sweepCount = metrics.counter('monitor_sweeps_total', 'Total sweeps executed');
@@ -22,19 +33,11 @@ const sweepDuration = metrics.histogram(
 );
 const chatRequests = metrics.counter('monitor_chat_requests_total', 'Chat requests');
 
-// Import tool files to trigger registration via defineTool()
-import './tools/kubectl.js';
-import './tools/pinot-api.js';
-import type { Incident, Severity } from '@pinot-agents/shared';
-import { runAgentLoop } from './agent.js';
-import { getIncidents, parseIncidents, storeIncidents } from './incidents.js';
-import { MONITOR_SYSTEM_PROMPT } from './prompts/monitor.js';
-import { getOrCreateSession, purgeExpired, sessionCount } from './sessions.js';
-import { getSweepHistory, getTrendSummary, recordSweep } from './sweep-history.js';
+const client = new OpenAI({ baseURL: config.llm.baseUrl, apiKey: config.llm.apiKey });
+const tools = getToolSpecs();
+const model = config.llm.model;
 
-async function forwardToOperator(
-  incidents: import('@pinot-agents/shared').Incident[]
-): Promise<void> {
+async function forwardToOperator(incidents: Incident[]): Promise<void> {
   const url = `${config.services.operatorUrl}/incident`;
   const res = await fetch(url, {
     method: 'POST',
@@ -48,42 +51,7 @@ async function forwardToOperator(
   }
 }
 
-const client = new OpenAI({
-  baseURL: config.llm.baseUrl,
-  apiKey: config.llm.apiKey,
-});
-
-const tools = getToolSpecs();
-const model = config.llm.model;
-
-function jsonResponse(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
-    req.on('error', reject);
-  });
-}
-
-function parseQueryString(url: string): URLSearchParams {
-  const idx = url.indexOf('?');
-  return new URLSearchParams(idx >= 0 ? url.slice(idx + 1) : '');
-}
-
-async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  jsonResponse(res, 200, { ok: true });
-}
-
-async function handleSweepInner(
-  _req: http.IncomingMessage,
-  res: http.ServerResponse,
-  _signal: AbortSignal
-): Promise<void> {
+async function runSweep(): Promise<{ status: number; body: unknown }> {
   sweepCount.inc();
   console.log('Starting sweep via /sweep endpoint...');
   const startTime = Date.now();
@@ -101,13 +69,11 @@ async function handleSweepInner(
     const result = await runAgentLoop(client, model, messages, tools, config.agent.maxTurns);
     const durationMs = Date.now() - startTime;
     const elapsedSec = durationMs / 1000;
-    const elapsed = elapsedSec.toFixed(1);
     sweepDuration.observe(elapsedSec);
     const incidents = parseIncidents(result.response);
     incidentsDetected.inc(incidents.length);
     storeIncidents(incidents);
 
-    // Record sweep in history for trend detection
     const trendSummary = getTrendSummary(incidents);
     recordSweep({
       timestamp: new Date(startTime).toISOString(),
@@ -117,13 +83,12 @@ async function handleSweepInner(
     });
 
     console.log(
-      `Sweep completed in ${elapsed}s (${result.toolCalls.length} tool calls, ${incidents.length} incidents)`
+      `Sweep completed in ${elapsedSec.toFixed(1)}s (${result.toolCalls.length} tool calls, ${incidents.length} incidents)`
     );
     if (trendSummary) {
       console.log(trendSummary);
     }
 
-    // Forward incidents to Operator for triage (fire-and-forget)
     if (incidents.length > 0) {
       forwardToOperator(incidents).catch((err) =>
         console.error(
@@ -132,39 +97,24 @@ async function handleSweepInner(
       );
     }
 
-    jsonResponse(res, 200, {
-      report: result.response,
-      incidents,
-      trends: trendSummary || undefined,
-    });
+    return {
+      status: 200,
+      body: { report: result.response, incidents, trends: trendSummary || undefined },
+    };
   } catch (err: unknown) {
     sweepErrors.inc();
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`Sweep failed: ${msg}`);
-    jsonResponse(res, 500, { error: msg });
+    return { status: 500, body: { error: msg } };
   }
 }
 
-const handleSweep = withTimeout(handleSweepInner, config.server.sweepTimeoutMs);
+const ChatBody = z.object({
+  sessionId: z.string().optional(),
+  message: z.string().min(1),
+});
 
-async function handleChatInner(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  _signal: AbortSignal
-): Promise<void> {
-  let body: { sessionId?: string; message?: string };
-  try {
-    body = JSON.parse(await readBody(req));
-  } catch {
-    jsonResponse(res, 400, { error: 'Invalid JSON body' });
-    return;
-  }
-
-  if (!body.message || typeof body.message !== 'string') {
-    jsonResponse(res, 400, { error: "Missing or invalid 'message' field" });
-    return;
-  }
-
+async function runChat(body: z.infer<typeof ChatBody>): Promise<{ status: number; body: unknown }> {
   const session = getOrCreateSession(body.sessionId);
   session.messages.push({ role: 'user', content: body.message });
 
@@ -179,46 +129,24 @@ async function handleChatInner(
       tools,
       config.agent.maxTurns
     );
-    jsonResponse(res, 200, {
-      sessionId: session.id,
-      response: result.response,
-      toolCalls: result.toolCalls.map(({ name, args }) => ({ name, args })),
-    });
+    return {
+      status: 200,
+      body: {
+        sessionId: session.id,
+        response: result.response,
+        toolCalls: result.toolCalls.map(({ name, args }) => ({ name, args })),
+      },
+    };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`Chat failed [${session.id}]: ${msg}`);
-    jsonResponse(res, 500, { error: msg });
+    return { status: 500, body: { error: msg } };
   }
-}
-
-const handleChat = withTimeout(handleChatInner, config.server.chatTimeoutMs);
-
-async function handleIncidents(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const params = parseQueryString(req.url ?? '');
-  const severity = params.get('severity')?.toUpperCase() as Severity | undefined;
-  const valid: Severity[] = ['CRITICAL', 'WARNING', 'INFO'];
-  if (severity && !valid.includes(severity)) {
-    jsonResponse(res, 400, { error: `Invalid severity. Must be one of: ${valid.join(', ')}` });
-    return;
-  }
-  jsonResponse(res, 200, { incidents: getIncidents(severity) });
-}
-
-async function handleHistory(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const params = parseQueryString(req.url ?? '');
-  const hours = params.get('hours');
-  const lastHours = hours ? parseInt(hours, 10) : undefined;
-  if (hours && (isNaN(lastHours!) || lastHours! <= 0)) {
-    jsonResponse(res, 400, { error: "Invalid 'hours' parameter. Must be a positive integer." });
-    return;
-  }
-  const history = getSweepHistory(lastHours);
-  jsonResponse(res, 200, { count: history.length, sweeps: history });
 }
 
 // --- SSE Watch Mode ---
 
-const watchClients = new Set<http.ServerResponse>();
+const watchClients = new Set<ServerResponse>();
 
 async function runMiniSweep(): Promise<{ report: string; incidents: Incident[]; trends?: string }> {
   const startTime = Date.now();
@@ -254,7 +182,6 @@ async function runMiniSweep(): Promise<{ report: string; incidents: Incident[]; 
     `[watch] Mini-sweep completed in ${elapsedSec.toFixed(1)}s (${incidents.length} incidents)`
   );
 
-  // Forward incidents to Operator (fire-and-forget)
   if (incidents.length > 0) {
     forwardToOperator(incidents).catch((err) =>
       console.error(
@@ -280,7 +207,9 @@ function broadcastSSE(data: unknown): void {
 let watchInterval: ReturnType<typeof setInterval> | null = null;
 
 function startWatchLoop(): void {
-  if (watchInterval) return;
+  if (watchInterval) {
+    return;
+  }
   console.log(`[watch] Starting watch loop (interval: ${config.watch.intervalMs}ms)`);
   watchInterval = setInterval(async () => {
     if (watchClients.size === 0) {
@@ -313,64 +242,70 @@ function stopWatchLoop(): void {
   }
 }
 
-function handleWatch(_req: http.IncomingMessage, res: http.ServerResponse): void {
-  res.writeHead(200, {
+const app = createServer({ agentName: 'monitor' });
+
+app.get('/health', async () => ({ ok: true }));
+
+app.post('/sweep', async (_request, reply) => {
+  const result = await runWithTimeout(() => runSweep(), config.server.sweepTimeoutMs);
+  reply.status(result.status).send(result.body);
+});
+
+app.post('/chat', { schema: { body: ChatBody } }, async (request, reply) => {
+  const result = await runWithTimeout(() => runChat(request.body), config.server.chatTimeoutMs);
+  reply.status(result.status).send(result.body);
+});
+
+app.get('/incidents', async (request, reply) => {
+  const severity = (request.query as { severity?: string }).severity?.toUpperCase() as
+    | Severity
+    | undefined;
+  const valid: Severity[] = ['CRITICAL', 'WARNING', 'INFO'];
+  if (severity && !valid.includes(severity)) {
+    reply.status(400).send({ error: `Invalid severity. Must be one of: ${valid.join(', ')}` });
+    return;
+  }
+  reply.send({ incidents: getIncidents(severity) });
+});
+
+app.get('/history', async (request, reply) => {
+  const hours = (request.query as { hours?: string }).hours;
+  const lastHours = hours ? Number.parseInt(hours, 10) : undefined;
+  if (hours && (Number.isNaN(lastHours) || (lastHours ?? 0) <= 0)) {
+    reply.status(400).send({ error: "Invalid 'hours' parameter. Must be a positive integer." });
+    return;
+  }
+  const history = getSweepHistory(lastHours);
+  reply.send({ count: history.length, sweeps: history });
+});
+
+app.get('/watch', (request, reply) => {
+  reply.hijack();
+  const raw = reply.raw;
+  raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
   });
-
-  // Send initial connected event
-  res.write(
+  raw.write(
     `data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`
   );
 
-  watchClients.add(res);
+  watchClients.add(raw);
   console.log(`[watch] Client connected (${watchClients.size} total)`);
-
-  // Start the watch loop if not already running
   startWatchLoop();
 
-  // Clean up on disconnect
-  _req.on('close', () => {
-    watchClients.delete(res);
+  request.raw.on('close', () => {
+    watchClients.delete(raw);
     console.log(`[watch] Client disconnected (${watchClients.size} remaining)`);
     if (watchClients.size === 0) {
       stopWatchLoop();
     }
   });
-}
+});
 
-const server = http.createServer(async (req, res) => {
-  const { method, url } = req;
-  const path = url?.split('?')[0];
-
-  try {
-    if (method === 'GET' && path === '/health') {
-      await handleHealth(req, res);
-    } else if (method === 'POST' && path === '/sweep') {
-      await handleSweep(req, res);
-    } else if (method === 'POST' && path === '/chat') {
-      await handleChat(req, res);
-    } else if (method === 'GET' && path === '/incidents') {
-      await handleIncidents(req, res);
-    } else if (method === 'GET' && path === '/history') {
-      await handleHistory(req, res);
-    } else if (method === 'GET' && path === '/watch') {
-      handleWatch(req, res);
-    } else if (method === 'GET' && path === '/metrics') {
-      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
-      res.end(metrics.toPrometheus());
-    } else {
-      jsonResponse(res, 404, { error: 'Not found' });
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`Unhandled error: ${msg}`);
-    if (!res.headersSent) {
-      jsonResponse(res, 500, { error: 'Internal server error' });
-    }
-  }
+app.get('/metrics', async (_request, reply) => {
+  reply.header('Content-Type', 'text/plain; version=0.0.4').send(metrics.toPrometheus());
 });
 
 // Purge expired sessions every 10 minutes
@@ -382,7 +317,8 @@ const purgeInterval = setInterval(() => {
 }, 600_000);
 purgeInterval.unref();
 
-server.listen(config.server.port, () => {
+const start = async () => {
+  await app.listen({ port: config.server.port, host: '0.0.0.0' });
   console.log(`Pinot Monitor server listening on port ${config.server.port}`);
   console.log(
     `Model: ${model} | Max turns: ${config.agent.maxTurns} | Endpoint: ${config.llm.baseUrl}`
@@ -392,18 +328,18 @@ server.listen(config.server.port, () => {
   );
   console.log(`Watch interval: ${config.watch.intervalMs}ms`);
   console.log(
-    'Routes: GET /health, POST /sweep, POST /chat, GET /incidents, GET /history, GET /watch'
+    'Routes: GET /health, POST /sweep, POST /chat, GET /incidents, GET /history, GET /watch, GET /metrics'
   );
-});
+};
+start();
 
 registerGracefulShutdown({
-  server,
+  server: app.server,
   agentName: 'monitor',
   forceTimeout: config.server.shutdownTimeoutMs,
   onShutdown: () => {
     clearInterval(purgeInterval);
     stopWatchLoop();
-    // Close all SSE clients
     for (const client of watchClients) {
       client.end();
     }
