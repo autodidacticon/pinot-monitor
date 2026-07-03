@@ -1,12 +1,20 @@
-import http from 'node:http';
 import {
+  createServer,
   getToolSpecs,
   MetricsRegistry,
   registerGracefulShutdown,
-  withTimeout,
+  runWithTimeout,
 } from '@pinot-agents/shared';
 import OpenAI from 'openai';
+import { z } from 'zod';
+import { runAgentLoop } from './agent.js';
 import { config } from './config.js';
+import { MITIGATOR_SYSTEM_PROMPT } from './prompts/mitigator.js';
+import { getRollbackLog } from './rollback.js';
+// Import tools for side-effect registration
+import './tools/kubectl-write.js';
+import './tools/pinot-write.js';
+import './tools/monitor-verify.js';
 
 const metrics = new MetricsRegistry();
 const dispatchesReceived = metrics.counter(
@@ -24,56 +32,29 @@ const dispatchDuration = metrics.histogram(
   [1, 5, 10, 30, 60, 120, 300]
 );
 
-import { runAgentLoop } from './agent.js';
-import { MITIGATOR_SYSTEM_PROMPT } from './prompts/mitigator.js';
-import { getRollbackLog } from './rollback.js';
-// Import tools for side-effect registration
-import './tools/kubectl-write.js';
-import './tools/pinot-write.js';
-import './tools/monitor-verify.js';
-
-const client = new OpenAI({
-  baseURL: config.llm.baseUrl,
-  apiKey: config.llm.apiKey,
-});
-
+const client = new OpenAI({ baseURL: config.llm.baseUrl, apiKey: config.llm.apiKey });
 const tools = getToolSpecs();
 const model = config.llm.model;
 
-function jsonResponse(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
+const DispatchBody = z.object({
+  correlationId: z.string().optional(),
+  payload: z
+    .object({
+      incident: z.unknown().optional(),
+      runbookId: z.string().optional(),
+    })
+    .optional(),
+});
 
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
-    req.on('error', reject);
-  });
-}
-
-async function handleDispatchInner(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  _signal: AbortSignal
-): Promise<void> {
-  let body: { correlationId?: string; payload?: { incident?: unknown; runbookId?: string } };
-  try {
-    body = JSON.parse(await readBody(req));
-  } catch {
-    jsonResponse(res, 400, { error: 'Invalid JSON body' });
-    return;
-  }
-
+async function runDispatch(
+  body: z.infer<typeof DispatchBody>
+): Promise<{ status: number; body: unknown }> {
   const incident = body.payload?.incident;
   const runbookId = body.payload?.runbookId ?? 'unknown';
   const correlationId = body.correlationId ?? 'none';
 
   if (!incident) {
-    jsonResponse(res, 400, { error: 'Missing payload.incident' });
-    return;
+    return { status: 400, body: { error: 'Missing payload.incident' } };
   }
 
   dispatchesReceived.inc();
@@ -119,54 +100,41 @@ async function handleDispatchInner(
     console.log(
       `[dispatch] completed runbook=${runbookId} correlation=${correlationId} in ${((Date.now() - dispatchStart) / 1000).toFixed(1)}s`
     );
-    jsonResponse(res, 200, {
-      correlationId,
-      runbookId,
-      response: result.response,
-      toolCalls: result.toolCalls.map(({ name, args }) => ({ name, args })),
-    });
+    return {
+      status: 200,
+      body: {
+        correlationId,
+        runbookId,
+        response: result.response,
+        toolCalls: result.toolCalls.map(({ name, args }) => ({ name, args })),
+      },
+    };
   } catch (err: unknown) {
     dispatchErrors.inc();
     dispatchDuration.observe((Date.now() - dispatchStart) / 1000);
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[dispatch] failed runbook=${runbookId}: ${msg}`);
-    jsonResponse(res, 500, { error: msg });
+    return { status: 500, body: { error: msg } };
   }
 }
 
-const handleDispatch = withTimeout(handleDispatchInner, config.dispatchTimeoutMs);
+const app = createServer({ agentName: 'mitigator' });
 
-async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  jsonResponse(res, 200, { ok: true, agent: 'mitigator' });
-}
+app.get('/health', async () => ({ ok: true, agent: 'mitigator' }));
 
-const server = http.createServer(async (req, res) => {
-  const { method, url } = req;
-  const path = url?.split('?')[0];
-
-  try {
-    if (method === 'GET' && path === '/health') {
-      await handleHealth(req, res);
-    } else if (method === 'POST' && path === '/dispatch') {
-      await handleDispatch(req, res);
-    } else if (method === 'GET' && path === '/rollback') {
-      jsonResponse(res, 200, { entries: getRollbackLog() });
-    } else if (method === 'GET' && path === '/metrics') {
-      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
-      res.end(metrics.toPrometheus());
-    } else {
-      jsonResponse(res, 404, { error: 'Not found' });
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`Unhandled error: ${msg}`);
-    if (!res.headersSent) {
-      jsonResponse(res, 500, { error: 'Internal server error' });
-    }
-  }
+app.post('/dispatch', { schema: { body: DispatchBody } }, async (request, reply) => {
+  const result = await runWithTimeout(() => runDispatch(request.body), config.dispatchTimeoutMs);
+  reply.status(result.status).send(result.body);
 });
 
-server.listen(config.server.port, () => {
+app.get('/rollback', async () => ({ entries: getRollbackLog() }));
+
+app.get('/metrics', async (_request, reply) => {
+  reply.header('Content-Type', 'text/plain; version=0.0.4').send(metrics.toPrometheus());
+});
+
+const start = async () => {
+  await app.listen({ port: config.server.port, host: '0.0.0.0' });
   console.log(`Mitigator service listening on port ${config.server.port}`);
   console.log(`Model: ${model} | Max turns: ${config.agent.maxTurns}`);
   console.log(`Dispatch timeout: ${config.dispatchTimeoutMs}ms`);
@@ -174,11 +142,12 @@ server.listen(config.server.port, () => {
   console.log(
     `Dry-run mode: ${config.dryRun ? 'ENABLED (write tools will simulate)' : 'DISABLED'}`
   );
-  console.log('Routes: GET /health, POST /dispatch, GET /rollback');
-});
+  console.log('Routes: GET /health, POST /dispatch, GET /rollback, GET /metrics');
+};
+start();
 
 registerGracefulShutdown({
-  server,
+  server: app.server,
   agentName: 'mitigator',
   forceTimeout: config.shutdownTimeoutMs,
 });
