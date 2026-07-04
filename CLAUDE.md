@@ -57,7 +57,7 @@ ES modules (`"type": "module"`), TypeScript with strict mode (including `noUnche
 - `src/index.ts` — Fastify 5 server on :3002. Routes: `GET /health`, `POST /incident` (rate-limited), `GET /audit`, `GET /metrics`, `GET /novel-incidents`, `GET /pending-approvals`, `POST /approve/:id`, `POST /reject/:id`.
 - `src/runbooks/definitions.ts` — 8 runbooks (pod_crashloop, segment_offline, broker_unreachable, controller_down, high_restart_count, query_overload, ingestion_lag, storage_pressure) with severity/component/evidence pattern matching and per-runbook `minTrustLevel`.
 - `src/circuit-breaker.ts` — per-runbook/component attempt tracking with cooldown.
-- `src/audit.ts` — in-memory audit log of all operator decisions; `src/audit-persistence.ts` — file-based persistence.
+- `src/audit.ts` — in-memory audit log (capped at 1000) of all operator decisions; `src/audit-persistence.ts` — persistence for consequential entries as structured JSON lines to stdout (durable retention is delegated to the deployment environment).
 - `src/novel-incidents.ts` — tracks incidents that matched no runbook (self-improvement input).
 
 **`packages/mitigator` (`@pinot-agents/mitigator`):**

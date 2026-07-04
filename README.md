@@ -390,7 +390,7 @@ Prometheus-format metrics.
 - **DRY_RUN mode** (default: enabled) — all mitigator write tools simulate without executing
 - **Circuit breakers** — per-runbook/component retry limits with cooldown periods
 - **Blast radius controls** — max 2 concurrent remediations, single-pod delete only (no wildcards/selectors)
-- **Rollback log** — before-state captured for all write operations
+- **Rollback log** — before-state captured for executed `kubectl_delete`, `pinot_reload_segment`, and `pinot_update_config` actions (not `kubectl_exec`/`pinot_rebalance` — a known gap)
 - **Rate limiting** — operator rejects incident floods (10 req/min default)
 - **Input validation** — Zod schema validation on all incident data at system boundaries
 - **Request timeouts** — sweep (15min), chat (10min), dispatch (10min)

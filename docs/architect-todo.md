@@ -30,7 +30,7 @@
 ## Phase 4 — Hardening (was Phase 3 in CLAUDE.md)
 - [x] Prometheus metrics on all 3 agents (`packages/shared/src/metrics.ts`)
 - [x] GET /metrics endpoint on Monitor, Operator, Mitigator
-- [x] File-based audit persistence (`packages/operator/src/audit-persistence.ts`)
+- [x] Audit persistence (`packages/operator/src/audit-persistence.ts`) — structured JSON lines to stdout for consequential entries; durable file/table storage remains delegated to the deployment environment (see open item on Pinot-table audit)
 - [x] Human review checkpoint (GET /pending-approvals, POST /approve/:id, POST /reject/:id)
 - [x] Dockerfile updated for all packages
 - [x] Helm env var mismatches fixed
@@ -61,6 +61,7 @@
 - [x] `k8s/deploy.yaml` now sets `LLM_BASE_URL`/`LLM_MODEL` (was legacy `OLLAMA_*`; fallback still supported in code)
 - [ ] Runbook action arg names (`table`, `segment`, `selector`) don't match the mitigator tool schemas (`tableName`, `segmentName`; `kubectl_delete` rejects selectors) — they act as LLM hints today; align them
 - [ ] Consider pinning an exact Node patch across `.nvmrc`/Dockerfile (currently floating 22.x)
+- [ ] Rollback log coverage gap (found during OpenSpec audit): `kubectl_exec` and `pinot_rebalance` never record rollback entries, and dry-run simulations record nothing — record entries (or intended actions in dry-run) or document why not
 - [x] Historical docs refreshed (2026-07): `docs/testing-plan.md` and `docs/k8s-setup.md` corrected to real commands/Helm keys/CI; `EVOLUTION.md`, `pinot-monitor-plan.md`, `docs/operational-best-practices.md` given status banners with misleading specifics annotated; `docs/test-scenarios.md` withTimeout note added. Remaining qwen3/npm mentions are deliberate history (QC run records, original plan text)
 
 ## QC Test Results (latest run)
