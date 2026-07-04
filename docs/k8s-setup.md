@@ -29,7 +29,7 @@ kubectl create namespace pinot
 ### 2. Add the Pinot Helm repository
 
 ```bash
-helm repo add apachepinot https://apachepinot.github.io/pinot-helm-charts
+helm repo add pinot https://raw.githubusercontent.com/apache/pinot/master/helm
 helm repo update
 ```
 
@@ -91,7 +91,7 @@ zookeeper:
 ### 4. Install Pinot
 
 ```bash
-helm install pinot apachepinot/pinot \
+helm install pinot pinot/pinot \
   --namespace pinot \
   -f pinot-values.yaml \
   --timeout 10m

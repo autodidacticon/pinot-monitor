@@ -62,6 +62,7 @@
 - [ ] Runbook action arg names (`table`, `segment`, `selector`) don't match the mitigator tool schemas (`tableName`, `segmentName`; `kubectl_delete` rejects selectors) — they act as LLM hints today; align them
 - [ ] Consider pinning an exact Node patch across `.nvmrc`/Dockerfile (currently floating 22.x)
 - [ ] Rollback log coverage gap (found during OpenSpec audit): `kubectl_exec` and `pinot_rebalance` never record rollback entries, and dry-run simulations record nothing — record entries (or intended actions in dry-run) or document why not
+- [ ] Operator OOMKilled at the chart's default 128Mi memory limit (found during soak commissioning, 2026-07): the Fastify migration raised the operator's footprint; soak runs with an install-values override (256Mi limit / 128Mi request) — bump the chart default in `k8s/helm/pinot-agents/values.yaml`
 - [x] Historical docs refreshed (2026-07): `docs/testing-plan.md` and `docs/k8s-setup.md` corrected to real commands/Helm keys/CI; `EVOLUTION.md`, `pinot-monitor-plan.md`, `docs/operational-best-practices.md` given status banners with misleading specifics annotated; `docs/test-scenarios.md` withTimeout note added. Remaining qwen3/npm mentions are deliberate history (QC run records, original plan text)
 
 ## QC Test Results (latest run)
