@@ -1,0 +1,23 @@
+schema: spec-driven
+
+# Shown to AI when creating artifacts. Full context lives in openspec/project.md.
+context: |
+  Pinot Agent System: autonomous monitoring + remediation of Apache Pinot on Kubernetes.
+  Three agents: Monitor (LLM, read-only observe), Operator (deterministic rules engine,
+  decide), Mitigator (LLM, write-capable act). Graduated autonomy via trust levels 0-3;
+  safety first (dry-run default, blast radius, circuit breakers, rollback capture).
+  Tech: Node 22, pnpm workspaces, TypeScript ESNext strict, Fastify 5 via shared
+  createServer() factory, Zod 4 at boundaries, openai pkg against any OpenAI-compatible
+  provider (default glm-4.7-flash on Ollama), Biome, Vitest, tsx (no build step).
+  Conventions: Monitor tools MUST be read-only; only the Mitigator has write tools.
+  Tools return error strings instead of throwing. Inter-agent JSON response shapes are
+  frozen contracts. Read openspec/project.md and docs/architect-todo.md for goals,
+  non-goals, and roadmap.
+
+rules:
+  proposal:
+    - Always include a "Non-goals" section
+    - State which capability specs (openspec/specs/*) the change touches
+  tasks:
+    - Every code task ends with the gate green (pnpm lint && pnpm typecheck && pnpm test)
+    - Preserve inter-agent response contracts unless the proposal explicitly changes them

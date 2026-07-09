@@ -1,6 +1,6 @@
 // Phase 2: Self-improvement loop — track unhandled failure patterns
-import { randomUUID } from "node:crypto";
-import type { Incident } from "@pinot-agents/shared";
+import { randomUUID } from 'node:crypto';
+import type { Incident } from '@pinot-agents/shared';
 
 export interface NovelIncident {
   id: string;
@@ -11,7 +11,7 @@ export interface NovelIncident {
   firstSeen: string;
   lastSeen: string;
   examples: Array<{ timestamp: string; evidence: string[] }>;
-  status: "new" | "acknowledged" | "runbook_created";
+  status: 'new' | 'acknowledged' | 'runbook_created';
 }
 
 const novelIncidents = new Map<string, NovelIncident>();
@@ -19,14 +19,14 @@ const MAX_EXAMPLES = 5;
 
 function buildPattern(incident: Incident): string {
   const keywords = incident.evidence
-    .join(" ")
+    .join(' ')
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
     .filter((w) => w.length > 3)
     .slice(0, 5)
     .sort()
-    .join("_");
+    .join('_');
   return `${incident.component}:${keywords}`;
 }
 
@@ -41,7 +41,9 @@ export function recordNovelIncident(incident: Incident): NovelIncident {
     if (existing.examples.length < MAX_EXAMPLES) {
       existing.examples.push({ timestamp: now, evidence: incident.evidence });
     }
-    console.log(`[NOVEL] Recurring unhandled pattern: ${pattern} (${existing.occurrences} occurrences)`);
+    console.log(
+      `[NOVEL] Recurring unhandled pattern: ${pattern} (${existing.occurrences} occurrences)`
+    );
     return existing;
   }
 
@@ -54,7 +56,7 @@ export function recordNovelIncident(incident: Incident): NovelIncident {
     firstSeen: now,
     lastSeen: now,
     examples: [{ timestamp: now, evidence: incident.evidence }],
-    status: "new",
+    status: 'new',
   };
   novelIncidents.set(pattern, novel);
   console.log(`[NOVEL] New unhandled pattern detected: ${pattern}`);
@@ -62,15 +64,13 @@ export function recordNovelIncident(incident: Incident): NovelIncident {
 }
 
 export function getNovelIncidents(): NovelIncident[] {
-  return Array.from(novelIncidents.values()).sort(
-    (a, b) => b.occurrences - a.occurrences,
-  );
+  return Array.from(novelIncidents.values()).sort((a, b) => b.occurrences - a.occurrences);
 }
 
 export function acknowledgeNovelIncident(id: string): boolean {
   for (const incident of novelIncidents.values()) {
     if (incident.id === id) {
-      incident.status = "acknowledged";
+      incident.status = 'acknowledged';
       return true;
     }
   }
@@ -80,7 +80,7 @@ export function acknowledgeNovelIncident(id: string): boolean {
 export function markRunbookCreated(id: string): boolean {
   for (const incident of novelIncidents.values()) {
     if (incident.id === id) {
-      incident.status = "runbook_created";
+      incident.status = 'runbook_created';
       return true;
     }
   }

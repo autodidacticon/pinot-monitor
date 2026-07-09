@@ -1,5 +1,5 @@
-import { z } from "zod";
-import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import type { ChatCompletionTool } from 'openai/resources/chat/completions.js';
+import { z } from 'zod';
 
 export type ToolHandler = (args: Record<string, unknown>) => Promise<string>;
 
@@ -19,17 +19,17 @@ export function defineTool<T extends z.ZodType>(
   name: string,
   description: string,
   schema: T,
-  handler: (args: z.infer<T>) => Promise<string>,
+  handler: (args: z.infer<T>) => Promise<string>
 ): ToolDefinition {
   const { $schema, ...parameters } = z.toJSONSchema(schema) as Record<string, unknown>;
 
   const def: ToolDefinition = {
     spec: {
-      type: "function",
+      type: 'function',
       function: {
         name,
         description,
-        parameters: parameters as ChatCompletionTool["function"]["parameters"],
+        parameters: parameters as ChatCompletionTool['function']['parameters'],
       },
     },
     handler: async (rawArgs: Record<string, unknown>) => {

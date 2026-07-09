@@ -1,10 +1,9 @@
 /**
  * Shared lifecycle utilities for all agents:
  * - Graceful shutdown (SIGTERM/SIGINT handling)
- * - Request timeout middleware
  * - Rate limiting
  */
-import http from "node:http";
+import type http from 'node:http';
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 
@@ -52,39 +51,12 @@ export function registerGracefulShutdown(options: GracefulShutdownOptions): void
     console.log(`[${agentName}] Waiting up to ${forceTimeout}ms for in-flight requests...`);
   };
 
-  process.on("SIGTERM", () => { shutdown("SIGTERM"); });
-  process.on("SIGINT", () => { shutdown("SIGINT"); });
-}
-
-// ─── Request Timeout ─────────────────────────────────────────────────────────
-
-/**
- * Wraps an async request handler with a timeout. If the handler does not
- * complete within `timeoutMs`, the response is ended with a 504 Gateway Timeout.
- * Returns an AbortSignal that the handler can check for early termination.
- */
-export function withTimeout(
-  handler: (req: http.IncomingMessage, res: http.ServerResponse, signal: AbortSignal) => Promise<void>,
-  timeoutMs: number,
-): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> {
-  return async (req, res) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-      if (!res.headersSent) {
-        res.writeHead(504, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `Request timed out after ${timeoutMs}ms` }));
-      } else if (!res.writableEnded) {
-        res.end();
-      }
-    }, timeoutMs);
-
-    try {
-      await handler(req, res, controller.signal);
-    } finally {
-      clearTimeout(timer);
-    }
-  };
+  process.on('SIGTERM', () => {
+    shutdown('SIGTERM');
+  });
+  process.on('SIGINT', () => {
+    shutdown('SIGINT');
+  });
 }
 
 // ─── Rate Limiter ────────────────────────────────────────────────────────────
@@ -112,7 +84,7 @@ export class SlidingWindowRateLimiter {
     const windowStart = now - this.windowMs;
 
     // Remove expired timestamps
-    while (this.timestamps.length > 0 && this.timestamps[0] <= windowStart) {
+    while (this.timestamps.length > 0 && (this.timestamps[0] ?? Infinity) <= windowStart) {
       this.timestamps.shift();
     }
 
@@ -127,7 +99,7 @@ export class SlidingWindowRateLimiter {
   /** Returns the number of remaining requests in the current window. */
   get remaining(): number {
     const windowStart = Date.now() - this.windowMs;
-    while (this.timestamps.length > 0 && this.timestamps[0] <= windowStart) {
+    while (this.timestamps.length > 0 && (this.timestamps[0] ?? Infinity) <= windowStart) {
       this.timestamps.shift();
     }
     return Math.max(0, this.maxRequests - this.timestamps.length);

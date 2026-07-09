@@ -22,7 +22,7 @@ spec:
         - name: operator
           image: {{ .Values.operator.image }}
           imagePullPolicy: IfNotPresent
-          command: ["npm", "run", "start:operator"]
+          command: ["pnpm", "run", "start:operator"]
           ports:
             - name: http
               containerPort: {{ .Values.operator.port }}

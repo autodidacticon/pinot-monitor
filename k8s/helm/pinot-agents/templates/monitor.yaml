@@ -22,7 +22,7 @@ spec:
         - name: monitor
           image: {{ .Values.monitor.image }}
           imagePullPolicy: IfNotPresent
-          command: ["npm", "start"]
+          command: ["pnpm", "start"]
           ports:
             - name: http
               containerPort: {{ .Values.monitor.port }}

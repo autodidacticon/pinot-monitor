@@ -20,7 +20,9 @@ const auditLog: AuditEntry[] = [];
 
 export function logAudit(entry: AuditEntry): void {
   auditLog.push(entry);
-  console.log(`[AUDIT] ${entry.timestamp} | ${entry.agent} | ${entry.action} | ${entry.target} | ${entry.outputSummary}`);
+  console.log(
+    `[AUDIT] ${entry.timestamp} | ${entry.agent} | ${entry.action} | ${entry.target} | ${entry.outputSummary}`
+  );
   if (auditLog.length > MAX_ENTRIES) {
     auditLog.splice(0, auditLog.length - MAX_ENTRIES);
   }

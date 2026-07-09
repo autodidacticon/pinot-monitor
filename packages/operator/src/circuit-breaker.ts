@@ -12,7 +12,12 @@ function makeKey(runbookId: string, component: string): string {
   return `${runbookId}:${component}`;
 }
 
-export function canAttempt(runbookId: string, component: string, maxRetries: number, cooldownMs: number): boolean {
+export function canAttempt(
+  runbookId: string,
+  component: string,
+  maxRetries: number,
+  cooldownMs: number
+): boolean {
   const key = makeKey(runbookId, component);
   const record = attempts.get(key);
   if (!record) return true;

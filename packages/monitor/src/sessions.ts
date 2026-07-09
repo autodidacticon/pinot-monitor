@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
-import type OpenAI from "openai";
-import { config } from "./config.js";
-import { CHAT_SYSTEM_PROMPT } from "./prompts/monitor.js";
+import { randomUUID } from 'node:crypto';
+import type OpenAI from 'openai';
+import { config } from './config.js';
+import { CHAT_SYSTEM_PROMPT } from './prompts/monitor.js';
 
 export interface Session {
   id: string;
@@ -30,7 +30,7 @@ export function getOrCreateSession(sessionId?: string): Session {
   const id = sessionId ?? randomUUID();
   const session: Session = {
     id,
-    messages: [{ role: "system", content: CHAT_SYSTEM_PROMPT }],
+    messages: [{ role: 'system', content: CHAT_SYSTEM_PROMPT }],
     createdAt: Date.now(),
     lastAccessedAt: Date.now(),
   };

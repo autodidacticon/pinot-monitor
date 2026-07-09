@@ -1,2 +1,14 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Agent tooling
 .claude/
 .claude-flow/
+
+# Environment
+.env
+.env.*

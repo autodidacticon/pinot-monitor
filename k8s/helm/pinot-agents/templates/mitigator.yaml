@@ -22,7 +22,7 @@ spec:
         - name: mitigator
           image: {{ .Values.mitigator.image }}
           imagePullPolicy: IfNotPresent
-          command: ["npm", "run", "start:mitigator"]
+          command: ["pnpm", "run", "start:mitigator"]
           ports:
             - name: http
               containerPort: {{ .Values.mitigator.port }}

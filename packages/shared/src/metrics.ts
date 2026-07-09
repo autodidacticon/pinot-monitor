@@ -6,7 +6,7 @@ export class Counter {
   constructor(
     readonly name: string,
     readonly help: string,
-    readonly labels: Record<string, string> = {},
+    readonly labels: Record<string, string> = {}
   ) {}
 
   inc(amount = 1): void {
@@ -24,8 +24,8 @@ export class Counter {
 
   private labelString(): string {
     const entries = Object.entries(this.labels);
-    if (entries.length === 0) return "";
-    return `{${entries.map(([k, v]) => `${k}="${v}"`).join(",")}}`;
+    if (entries.length === 0) return '';
+    return `{${entries.map(([k, v]) => `${k}="${v}"`).join(',')}}`;
   }
 }
 
@@ -34,7 +34,7 @@ export class Gauge {
   constructor(
     readonly name: string,
     readonly help: string,
-    readonly labels: Record<string, string> = {},
+    readonly labels: Record<string, string> = {}
   ) {}
 
   set(value: number): void {
@@ -60,8 +60,8 @@ export class Gauge {
 
   private labelString(): string {
     const entries = Object.entries(this.labels);
-    if (entries.length === 0) return "";
-    return `{${entries.map(([k, v]) => `${k}="${v}"`).join(",")}}`;
+    if (entries.length === 0) return '';
+    return `{${entries.map(([k, v]) => `${k}="${v}"`).join(',')}}`;
   }
 }
 
@@ -74,7 +74,7 @@ export class Histogram {
     readonly name: string,
     readonly help: string,
     readonly buckets: number[] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
-    readonly labels: Record<string, string> = {},
+    readonly labels: Record<string, string> = {}
   ) {
     this.bucketCounts = new Array(buckets.length).fill(0);
   }
@@ -83,8 +83,10 @@ export class Histogram {
     this.sum += value;
     this.count++;
     for (let i = 0; i < this.buckets.length; i++) {
-      if (value <= this.buckets[i]) {
-        this.bucketCounts[i]++;
+      const bucket = this.buckets[i];
+      const bucketCount = this.bucketCounts[i];
+      if (bucket !== undefined && bucketCount !== undefined && value <= bucket) {
+        this.bucketCounts[i] = bucketCount + 1;
       }
     }
   }
@@ -94,20 +96,20 @@ export class Histogram {
     const lines = [`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} histogram`];
     let cumulative = 0;
     for (let i = 0; i < this.buckets.length; i++) {
-      cumulative += this.bucketCounts[i];
+      cumulative += this.bucketCounts[i] ?? 0;
       const le = this.buckets[i];
       lines.push(`${this.name}_bucket${this.mergeLabelStr(labelStr, `le="${le}"`)} ${cumulative}`);
     }
     lines.push(`${this.name}_bucket${this.mergeLabelStr(labelStr, `le="+Inf"`)} ${this.count}`);
     lines.push(`${this.name}_sum${labelStr} ${this.sum}`);
     lines.push(`${this.name}_count${labelStr} ${this.count}`);
-    return lines.join("\n");
+    return lines.join('\n');
   }
 
   private labelString(): string {
     const entries = Object.entries(this.labels);
-    if (entries.length === 0) return "";
-    return `{${entries.map(([k, v]) => `${k}="${v}"`).join(",")}}`;
+    if (entries.length === 0) return '';
+    return `{${entries.map(([k, v]) => `${k}="${v}"`).join(',')}}`;
   }
 
   private mergeLabelStr(existing: string, extra: string): string {
@@ -131,13 +133,18 @@ export class MetricsRegistry {
     return g;
   }
 
-  histogram(name: string, help: string, buckets?: number[], labels?: Record<string, string>): Histogram {
+  histogram(
+    name: string,
+    help: string,
+    buckets?: number[],
+    labels?: Record<string, string>
+  ): Histogram {
     const h = new Histogram(name, help, buckets, labels);
     this.metrics.push(h);
     return h;
   }
 
   toPrometheus(): string {
-    return this.metrics.map((m) => m.toPrometheus()).join("\n\n") + "\n";
+    return this.metrics.map((m) => m.toPrometheus()).join('\n\n') + '\n';
   }
 }

@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { Incident as IncidentSchema } from "@pinot-agents/shared";
-import type { Incident, Severity } from "@pinot-agents/shared";
+import { randomUUID } from 'node:crypto';
+import type { Incident, Severity } from '@pinot-agents/shared';
+import { Incident as IncidentSchema } from '@pinot-agents/shared';
 
 const MAX_INCIDENTS = 500;
 const incidentStore: Incident[] = [];
@@ -17,12 +17,14 @@ function validateIncident(raw: Incident): Incident | null {
   // Validate against Zod schema
   const result = IncidentSchema.safeParse(raw);
   if (!result.success) {
-    console.warn(JSON.stringify({
-      level: "validation",
-      action: "dropped_invalid_incident",
-      reason: result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; "),
-      raw,
-    }));
+    console.warn(
+      JSON.stringify({
+        level: 'validation',
+        action: 'dropped_invalid_incident',
+        reason: result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+        raw,
+      })
+    );
     droppedIncidentCount++;
     return null;
   }
@@ -31,24 +33,28 @@ function validateIncident(raw: Incident): Incident | null {
 
   // Validate component is non-empty
   if (!incident.component.trim()) {
-    console.warn(JSON.stringify({
-      level: "validation",
-      action: "dropped_invalid_incident",
-      reason: "component is empty",
-      raw,
-    }));
+    console.warn(
+      JSON.stringify({
+        level: 'validation',
+        action: 'dropped_invalid_incident',
+        reason: 'component is empty',
+        raw,
+      })
+    );
     droppedIncidentCount++;
     return null;
   }
 
   // Validate evidence is non-empty
   if (incident.evidence.length === 0) {
-    console.warn(JSON.stringify({
-      level: "validation",
-      action: "dropped_invalid_incident",
-      reason: "evidence array is empty",
-      raw,
-    }));
+    console.warn(
+      JSON.stringify({
+        level: 'validation',
+        action: 'dropped_invalid_incident',
+        reason: 'evidence array is empty',
+        raw,
+      })
+    );
     droppedIncidentCount++;
     return null;
   }
@@ -80,8 +86,13 @@ export function parseIncidents(response: string): Incident[] {
     return extractFromReport(response);
   }
 
+  const jsonBlock = jsonBlockMatch[1];
+  if (jsonBlock === undefined) {
+    return extractFromReport(response);
+  }
+
   try {
-    const parsed = JSON.parse(jsonBlockMatch[1]);
+    const parsed = JSON.parse(jsonBlock);
     const raw = Array.isArray(parsed) ? parsed : parsed.incidents;
     if (!Array.isArray(raw)) return [];
     return raw.map(normalizeIncident).filter((i): i is Incident => validateIncident(i) !== null);
@@ -98,27 +109,27 @@ function extractFromReport(response: string): Incident[] {
   const statusMatch = response.match(/Overall Status:\s*(HEALTHY|DEGRADED|CRITICAL)/i);
   const overallStatus = statusMatch?.[1]?.toUpperCase();
 
-  if (overallStatus === "HEALTHY") return [];
+  if (overallStatus === 'HEALTHY') return [];
 
   // Look for the Issues section
   const issuesMatch = response.match(/── Issues ──+\n([\s\S]*?)(?=\n── |═{3,})/);
   if (!issuesMatch) return [];
 
-  const issuesText = issuesMatch[1].trim();
+  const issuesText = (issuesMatch[1] ?? '').trim();
   if (/none detected/i.test(issuesText)) return [];
 
   // Each line starting with - or * or a number is an issue
-  const lines = issuesText.split("\n").filter((l) => /^\s*[-*\d]/.test(l));
+  const lines = issuesText.split('\n').filter((l) => /^\s*[-*\d]/.test(l));
   for (const line of lines) {
-    const text = line.replace(/^\s*[-*\d.)\s]+/, "").trim();
+    const text = line.replace(/^\s*[-*\d.)\s]+/, '').trim();
     if (!text) continue;
 
     incidents.push({
       id: randomUUID(),
-      severity: overallStatus === "CRITICAL" ? "CRITICAL" : "WARNING",
+      severity: overallStatus === 'CRITICAL' ? 'CRITICAL' : 'WARNING',
       component: guessComponent(text),
       evidence: [text],
-      suggestedAction: "",
+      suggestedAction: '',
       timestamp: new Date().toISOString(),
     });
   }
@@ -128,24 +139,24 @@ function extractFromReport(response: string): Incident[] {
 
 function guessComponent(text: string): string {
   const lower = text.toLowerCase();
-  if (lower.includes("controller")) return "pinot-controller";
-  if (lower.includes("broker")) return "pinot-broker";
-  if (lower.includes("server")) return "pinot-server";
-  if (lower.includes("segment")) return "pinot-segments";
-  if (lower.includes("zookeeper")) return "zookeeper";
-  if (lower.includes("pod") || lower.includes("crash")) return "kubernetes";
-  return "unknown";
+  if (lower.includes('controller')) return 'pinot-controller';
+  if (lower.includes('broker')) return 'pinot-broker';
+  if (lower.includes('server')) return 'pinot-server';
+  if (lower.includes('segment')) return 'pinot-segments';
+  if (lower.includes('zookeeper')) return 'zookeeper';
+  if (lower.includes('pod') || lower.includes('crash')) return 'kubernetes';
+  return 'unknown';
 }
 
 function normalizeIncident(raw: Record<string, unknown>): Incident {
   return {
     id: (raw.id as string) ?? randomUUID(),
-    severity: (["CRITICAL", "WARNING", "INFO"].includes(raw.severity as string)
+    severity: (['CRITICAL', 'WARNING', 'INFO'].includes(raw.severity as string)
       ? raw.severity
-      : "WARNING") as Incident["severity"],
-    component: (raw.component as string) ?? "unknown",
+      : 'WARNING') as Incident['severity'],
+    component: (raw.component as string) ?? 'unknown',
     evidence: Array.isArray(raw.evidence) ? raw.evidence.map(String) : [],
-    suggestedAction: (raw.suggestedAction as string) ?? "",
+    suggestedAction: (raw.suggestedAction as string) ?? '',
     timestamp: (raw.timestamp as string) ?? new Date().toISOString(),
   };
 }

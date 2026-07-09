@@ -1,5 +1,7 @@
 # Operational Best Practices: Gap Analysis & Recommendations
 
+> **Status (2026-07):** Historical document. This gap analysis reflects the codebase as of March 2026. The system has since been modernized (pnpm, Biome, Vitest, Fastify 5) and some gaps and counts described in the "Our Current State" sections are out of date. See README.md, CLAUDE.md, and docs/architect-todo.md for current state.
+
 **Date:** 2026-03-09
 **Scope:** Pinot Agent System (Monitor, Operator, Mitigator)
 **Method:** Web research of industry best practices compared against current codebase implementation

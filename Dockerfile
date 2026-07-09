@@ -9,16 +9,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
 
+RUN corepack enable
+
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/monitor/package.json packages/monitor/
 COPY packages/operator/package.json packages/operator/
 COPY packages/mitigator/package.json packages/mitigator/
-RUN npm ci --legacy-peer-deps -w @pinot-agents/shared -w @pinot-agents/monitor -w @pinot-agents/operator -w @pinot-agents/mitigator
+RUN pnpm install --frozen-lockfile
 
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
 COPY packages/monitor/ packages/monitor/
 COPY packages/operator/ packages/operator/
@@ -26,4 +28,4 @@ COPY packages/mitigator/ packages/mitigator/
 
 EXPOSE 3000 3001 3002
 
-CMD ["npm", "start"]
+CMD ["pnpm", "start"]

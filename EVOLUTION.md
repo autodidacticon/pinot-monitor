@@ -1,5 +1,7 @@
 # Pinot Agent System — Evolution Plan
 
+> **Status (2026-07):** Historical planning document. The three-agent system described here has been built and since modernized (pnpm, Biome, Vitest, Fastify 5). See README.md, CLAUDE.md, and docs/architect-todo.md for current state. Specifics a reader would act on (tool and runbook counts, routes, model names) have been refreshed; the roadmap narrative is otherwise preserved as written.
+
 ## Vision
 
 Evolve the pinot-monitor from a single read-only observer into a multi-agent system where specialized agents collaborate to observe, diagnose, and remediate infrastructure autonomously. Three runtime agents handle the production loop; development tasks (architecture, quality control, code generation) are handled by claude-flow/ruflo.
@@ -12,7 +14,7 @@ Evolve the pinot-monitor from a single read-only observer into a multi-agent sys
 
 **Role:** Read-only observation. Detects problems, produces health reports, answers questions about cluster state.
 
-**Current state:** HTTP server on :3000 with `/health`, `/sweep`, `/chat`, `/incidents`. Seven read-only tools (kubectl_get, pinot_health, pinot_tables, pinot_segments, pinot_cluster_info, pinot_debug_table, pinot_query).
+**Current state:** HTTP server on :3000 with `/health`, `/sweep`, `/chat`, `/incidents`, `/history`, `/watch`, `/metrics`. Twelve read-only tools (kubectl_get, kubectl_events, pinot_health, pinot_tables, pinot_segments, pinot_cluster_info, pinot_debug_table, pinot_table_size, pinot_broker_latency, pinot_ingestion_status, pinot_query, pinot_server_metrics).
 
 **Evolution path:**
 
@@ -20,8 +22,8 @@ Evolve the pinot-monitor from a single read-only observer into a multi-agent sys
 |-------|-----------|
 | P0 ✅ | Add Pinot SQL query tool (broker `/query/sql`) for data-level health checks (row counts, freshness, null ratios) |
 | P1 ✅ | Structured incident reports — emit machine-readable incident objects (severity, affected components, evidence, suggested actions) |
-| P2 | Continuous watch mode — long-lived WebSocket or SSE stream that pushes state changes as they occur, rather than polling via CronJob |
-| P3 | Historical awareness — persist sweep results (SQLite or Pinot itself) so the monitor can answer "when did this start?" and detect trends |
+| P2 ✅ | Continuous watch mode — long-lived WebSocket or SSE stream that pushes state changes as they occur, rather than polling via CronJob (`/watch`) |
+| P3 ✅ | Historical awareness — persist sweep results (SQLite or Pinot itself) so the monitor can answer "when did this start?" and detect trends (`/history`) |
 
 ### 2. Mitigator (exists)
 
@@ -76,7 +78,7 @@ ESCALATE_IF: pod re-enters CrashLoopBackOff within 5 minutes
 
 **Why it's needed:** The Monitor detects. The Mitigator acts. But something needs to sit between them and decide _whether_ to act, _when_, and _how aggressively_. Without the Operator, the Mitigator would either auto-remediate everything (dangerous) or require human approval for everything (defeats the purpose).
 
-**Current state:** HTTP server on :3002 with `/health`, `POST /incident`, `GET /audit`. Deterministic rules engine with 5 runbooks, circuit breaker, and audit log.
+**Current state:** HTTP server on :3002 with `/health`, `POST /incident`, `GET /audit`, `GET /metrics`, `GET /novel-incidents`, `GET /pending-approvals`, `POST /approve/:id`, `POST /reject/:id`. Deterministic rules engine with 8 runbooks, circuit breaker, and audit log.
 
 **Responsibilities:**
 - Receive incident reports from Monitor
@@ -149,7 +151,7 @@ Message types:
 
 ### Shared Tool Library (complete)
 
-The `@pinot-agents/shared` package provides `defineTool()`, Zod-based schema validation, and the agent loop. All three runtime agents use this shared framework while bringing their own tool sets.
+The `@pinot-agents/shared` package provides `defineTool()`, Zod-based schema validation, and shared server, lifecycle, and metrics infrastructure. All three runtime agents use this shared framework while bringing their own tool sets.
 
 ### Audit Log
 
@@ -159,7 +161,7 @@ Every agent action is logged to a shared store. Schema:
 timestamp | agent | action | target | input_summary | output_summary | correlation_id
 ```
 
-Currently in-memory within the Operator. Future: move to a Pinot table for persistence and self-monitoring.
+In-memory ring buffer within the Operator (last 1000 entries), with each entry also persisted as a structured JSON line to stdout so the deployment environment handles retention. Future: move to a Pinot table for self-monitoring.
 
 ### Message Bus (future)
 
@@ -189,7 +191,7 @@ Built the Mitigator and Operator as separate services.
 - Wired up: Monitor → Operator → Mitigator → Monitor verify loop
 - All three deploy as Deployments + Services in the `pinot` namespace
 
-### Phase 2 — Self-improvement loop
+### Phase 2 — Self-improvement loop ✅
 
 Connect runtime failure data back to development.
 
@@ -197,19 +199,19 @@ Connect runtime failure data back to development.
 - Use ruflo to design and implement new runbooks or tools for unhandled failure modes
 - The system gradually expands its coverage of failure modes
 
-### Phase 3 — Hardening
+### Phase 3 — Hardening (mostly complete)
 
-- Circuit breakers and rate limits on all mutation paths (circuit breaker exists, needs metrics)
-- Canary deployments (deploy to a staging cluster first)
-- Human review checkpoint for Mitigator actions above a severity threshold
-- Prometheus metrics from all agents (request counts, latencies, incidents detected/resolved)
-- Persist the audit log to a Pinot table — the system monitors itself
+- Circuit breakers and rate limits on all mutation paths ✅
+- Canary deployments (deploy to a staging cluster first, still remaining)
+- Human review checkpoint for Mitigator actions above a severity threshold ✅
+- Prometheus metrics from all agents (request counts, latencies, incidents detected/resolved) ✅
+- Persist the audit log to a Pinot table — the system monitors itself (currently structured JSON to stdout; Pinot table remaining)
 
 ---
 
 ## Resolved Decisions
 
-1. **Model selection per agent.** Each agent configures its own LLM independently via `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` env vars. The Helm chart supports per-agent overrides. Recommended: Monitor uses a cheap/fast model (GPT-4o-mini or local qwen3:32b), Mitigator uses the strongest available tool-calling model (GPT-4o, Claude Sonnet, or qwen3:235b), Operator uses no LLM (deterministic rules engine).
+1. **Model selection per agent.** Each agent configures its own LLM independently via `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` env vars. The Helm chart supports per-agent overrides. Recommended: Monitor uses a cheap/fast model (local `glm-4.7-flash`, the current default, or `claude-haiku-4-5-20251001`), Mitigator uses the strongest available tool-calling model (`claude-sonnet-5`, `claude-opus-4-8`, or `gpt-5.1`), Operator uses no LLM (deterministic rules engine).
 
 2. **Blast radius control.** Solved via trust levels + circuit breakers + dry-run mode. The Operator enforces a 4-level trust system (0=observe, 1=suggest, 2=approve, 3=auto-remediate) with per-runbook minimum trust levels. Mitigator defaults to `DRY_RUN=true` — all write tools simulate without executing. Circuit breakers prevent repeated remediation of the same component.
 

@@ -10,7 +10,7 @@
 ## Phase 1 — Mitigator + Operator
 - [x] Mitigator package with write-capable tools
 - [x] Operator package with deterministic rules engine
-- [x] 5 runbooks (pod_crashloop, segment_offline, broker_unreachable, controller_down, high_restart_count)
+- [x] 5 runbooks (pod_crashloop, segment_offline, broker_unreachable, controller_down, high_restart_count) — since grown to 8 (+ query_overload, ingestion_lag, storage_pressure)
 - [x] Monitor → Operator → Mitigator → Monitor verify loop
 - [x] Circuit breaker per runbook/component
 - [x] Trust level system (0=observe, 1=suggest, 2=approve, 3=auto-remediate)
@@ -30,7 +30,7 @@
 ## Phase 4 — Hardening (was Phase 3 in CLAUDE.md)
 - [x] Prometheus metrics on all 3 agents (`packages/shared/src/metrics.ts`)
 - [x] GET /metrics endpoint on Monitor, Operator, Mitigator
-- [x] File-based audit persistence (`packages/operator/src/audit-persistence.ts`)
+- [x] Audit persistence (`packages/operator/src/audit-persistence.ts`) — structured JSON lines to stdout for consequential entries; durable file/table storage remains delegated to the deployment environment (see open item on Pinot-table audit)
 - [x] Human review checkpoint (GET /pending-approvals, POST /approve/:id, POST /reject/:id)
 - [x] Dockerfile updated for all packages
 - [x] Helm env var mismatches fixed
@@ -38,9 +38,32 @@
 - [x] Graceful shutdown (all agents)
 - [x] Request timeouts (sweep 15min, chat 10min, dispatch 10min)
 - [x] Rate limiting (operator 10 req/min)
-- [ ] Propagate abort signal to in-flight sweeps during graceful shutdown
+- [ ] Propagate cancellation to in-flight sweeps on timeout/shutdown (`runWithTimeout` races a timer but does not cancel the underlying work; the old AbortSignal plumbing was removed in the Fastify migration)
 - [ ] Canary deployment support
 - [ ] Autonomy graduation metrics (track success/failure per runbook)
+
+## Phase 5 — Platform modernization (2026-07)
+- [x] Migrate npm → pnpm workspaces (pnpm@10.28.2, `workspace:*` deps, removes `--legacy-peer-deps`)
+- [x] Shared `tsconfig.base.json` — ESNext, strict + `noUncheckedIndexedAccess`/`noImplicitOverride`/`noFallthroughCasesInSwitch`; packages extend it, `tsc -b` project references kept
+- [x] Biome 2.4 as single lint + format tool; repo-wide reformat
+- [x] Vitest 4 unit suite (34 tests: registry, incidents, circuit breaker, rate limiter, runbooks, kubectl guard, server factory)
+- [x] Fastify 5 migration: shared `createServer()` factory in `@pinot-agents/shared` (Zod validation via fastify-type-provider-zod, shared error handler, 404 handler, `runWithTimeout`); all 3 servers migrated with response contracts preserved (SSE `/watch` via `reply.hijack()`)
+- [x] GitHub Actions CI (`.github/workflows/ci.yml`): install + Biome + typecheck + Vitest on Node 22
+- [x] Repo hygiene: gitignore/untrack `dist` + `*.tsbuildinfo`, `.nvmrc` 22, `@types/node` aligned to 22
+- [x] CLAUDE.md + README refreshed (pnpm commands, current model examples, verified tool/runbook/route counts)
+
+### Modernization follow-ups
+- [ ] Strengthen `definitions.test.ts` severity-gate assertion (`expect(rb).toBeUndefined()` instead of `rb?.id !== 'pod_crashloop'`)
+- [ ] Exercise the 504 `HandlerTimeoutError` path through a real Fastify route in tests
+- [ ] Unit tests for mitigator `GET /rollback` and `GET /metrics` (currently smoke-tested only)
+- [ ] Suppress the 13 intentional `noTemplateCurlyInString` warnings on runbook `${pod}`/`${table}` placeholder strings (scoped `biome-ignore` or a Biome override)
+- [x] Helm templates now launch via `pnpm start` / `pnpm run start:*` (was `npm`, which only worked because the image runs `corepack enable`)
+- [x] `k8s/deploy.yaml` now sets `LLM_BASE_URL`/`LLM_MODEL` (was legacy `OLLAMA_*`; fallback still supported in code)
+- [ ] Runbook action arg names (`table`, `segment`, `selector`) don't match the mitigator tool schemas (`tableName`, `segmentName`; `kubectl_delete` rejects selectors) — they act as LLM hints today; align them
+- [ ] Consider pinning an exact Node patch across `.nvmrc`/Dockerfile (currently floating 22.x)
+- [ ] Rollback log coverage gap (found during OpenSpec audit): `kubectl_exec` and `pinot_rebalance` never record rollback entries, and dry-run simulations record nothing — record entries (or intended actions in dry-run) or document why not
+- [ ] Operator OOMKilled at the chart's default 128Mi memory limit (found during soak commissioning, 2026-07): the Fastify migration raised the operator's footprint; soak runs with an install-values override (256Mi limit / 128Mi request) — bump the chart default in `k8s/helm/pinot-agents/values.yaml`
+- [x] Historical docs refreshed (2026-07): `docs/testing-plan.md` and `docs/k8s-setup.md` corrected to real commands/Helm keys/CI; `EVOLUTION.md`, `pinot-monitor-plan.md`, `docs/operational-best-practices.md` given status banners with misleading specifics annotated; `docs/test-scenarios.md` withTimeout note added. Remaining qwen3/npm mentions are deliberate history (QC run records, original plan text)
 
 ## QC Test Results (latest run)
 - TS-001 through TS-024: ALL PASS
@@ -49,7 +72,7 @@
 - TS-013: Novel incident tracking — PASS
 
 ## Deployment
-- [x] Agents running locally via npx tsx (verified healthy)
+- [x] Agents running locally (now `pnpm start` / `pnpm start:all` — tsx under the hood; verified healthy post-Fastify migration)
 - [x] Default model changed from qwen3:32b to glm-4.7-flash (16.9x faster sweeps: 41s vs 680-1280s)
 - [ ] Build Docker image on host (`docker build -t pinot-monitor:latest .`)
 - [ ] Deploy all 3 agents to k8s via Helm
@@ -72,7 +95,7 @@
 - [x] BUG-009: matchRunbook now checks severity field (WARNING→high_restart_count, CRITICAL→pod_crashloop)
 
 ## Remaining Items
-- [ ] Propagate abort signal to in-flight sweeps during graceful shutdown
+- [ ] Propagate cancellation to in-flight sweeps on timeout/shutdown (see Phase 4 note)
 - [ ] Canary deployments
 - [ ] Persist audit log to Pinot table for self-monitoring
 - [ ] Least-privilege ServiceAccount for mitigator in k8s

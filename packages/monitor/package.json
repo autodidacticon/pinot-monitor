@@ -8,12 +8,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@pinot-agents/shared": "*",
+    "@pinot-agents/shared": "workspace:*",
+    "fastify": "^5.8.5",
+    "fastify-type-provider-zod": "^6.1.0",
     "openai": "^4.96.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^25.3.3",
+    "@types/node": "^22.15.21",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

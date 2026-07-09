@@ -58,9 +58,9 @@ spec:
           ports:
             - containerPort: 3000
           env:
-            - name: OLLAMA_BASE_URL
+            - name: LLM_BASE_URL
               value: "http://host.internal:11434/v1"
-            - name: OLLAMA_MODEL
+            - name: LLM_MODEL
               value: "glm-4.7-flash"
           livenessProbe:
             httpGet:

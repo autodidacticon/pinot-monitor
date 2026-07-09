@@ -1,30 +1,26 @@
 // Tool framework
-export { defineTool, getToolSpecs, getToolHandler } from "./tools/registry.js";
-export type { ToolHandler, ToolDefinition } from "./tools/registry.js";
 
+export type { GracefulShutdownOptions, RateLimiterOptions } from './lifecycle.js';
+// Lifecycle utilities (graceful shutdown, rate limiting)
+export { registerGracefulShutdown, SlidingWindowRateLimiter } from './lifecycle.js';
+// Metrics
+export { Counter, Gauge, Histogram, MetricsRegistry } from './metrics.js';
+export type { AppInstance, CreateServerOptions } from './server.js';
+// Fastify server factory
+export { createServer, HandlerTimeoutError, runWithTimeout } from './server.js';
+export type { ToolDefinition, ToolHandler } from './tools/registry.js';
+export { defineTool, getToolHandler, getToolSpecs } from './tools/registry.js';
 // Incident types
-export { Severity, Incident, IncidentReport } from "./types/incident.js";
-
+export { Incident, IncidentReport, Severity } from './types/incident.js';
 // Message protocol types
 export {
-  MessageType,
-  AgentName,
   AgentMessage,
-  IncidentMessage,
+  AgentName,
+  AlertMessage,
+  AuditMessage,
   DispatchMessage,
+  IncidentMessage,
+  MessageType,
   VerifyMessage,
   VerifyResultMessage,
-  AuditMessage,
-  AlertMessage,
-} from "./types/messages.js";
-
-// Metrics
-export { Counter, Gauge, Histogram, MetricsRegistry } from "./metrics.js";
-
-// Lifecycle utilities (graceful shutdown, request timeout, rate limiting)
-export {
-  registerGracefulShutdown,
-  withTimeout,
-  SlidingWindowRateLimiter,
-} from "./lifecycle.js";
-export type { GracefulShutdownOptions, RateLimiterOptions } from "./lifecycle.js";
+} from './types/messages.js';

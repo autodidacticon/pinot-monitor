@@ -1,6 +1,6 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-export const Severity = z.enum(["CRITICAL", "WARNING", "INFO"]);
+export const Severity = z.enum(['CRITICAL', 'WARNING', 'INFO']);
 export type Severity = z.infer<typeof Severity>;
 
 export const Incident = z.object({

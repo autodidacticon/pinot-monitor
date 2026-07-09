@@ -29,7 +29,7 @@ kubectl create namespace pinot
 ### 2. Add the Pinot Helm repository
 
 ```bash
-helm repo add apachepinot https://apachepinot.github.io/pinot-helm-charts
+helm repo add pinot https://raw.githubusercontent.com/apache/pinot/master/helm
 helm repo update
 ```
 
@@ -91,7 +91,7 @@ zookeeper:
 ### 4. Install Pinot
 
 ```bash
-helm install pinot apachepinot/pinot \
+helm install pinot pinot/pinot \
   --namespace pinot \
   -f pinot-values.yaml \
   --timeout 10m
@@ -199,7 +199,7 @@ prometheus:
             source_labels: [__meta_kubernetes_pod_ip]
         metrics_path: /metrics
 
-      # Pinot Agents (future — these services don't expose /metrics yet)
+      # Pinot Agents (Monitor, Mitigator, and Operator each expose /metrics)
       - job_name: "pinot-agents"
         static_configs:
           - targets:
@@ -309,37 +309,39 @@ docker build -t pinot-monitor:latest /Users/richard/git/pinot-monitor
 ```bash
 helm install pinot-agents ./k8s/helm/pinot-agents \
   --namespace pinot \
-  --set image.repository=pinot-monitor \
-  --set image.tag=latest \
-  --set image.pullPolicy=Never \
-  --set ollama.host=host.internal \
-  --set ollama.port=11434 \
-  --set ollama.model=qwen3:32b \
-  --set trustLevel=low \
-  --set dryRun=true
+  --set global.llm.baseUrl=http://host.internal:11434/v1 \
+  --set global.llm.model=glm-4.7-flash \
+  --set operator.trustLevel=0 \
+  --set mitigator.dryRun=true
 ```
+
+All of the values above are the chart defaults, so a bare `helm install pinot-agents ./k8s/helm/pinot-agents --namespace pinot` works too. Images default to `pinot-monitor:latest` per agent (`monitor.image`, `operator.image`, `mitigator.image`) with `imagePullPolicy: IfNotPresent`, so the locally built image is picked up automatically.
 
 ### Key configuration values
 
 | Value | Default | Description |
 |-------|---------|-------------|
-| `ollama.host` | `host.internal` | Ollama hostname (use `host.internal` in-cluster) |
-| `ollama.port` | `11434` | Ollama port |
-| `ollama.model` | `qwen3:32b` | LLM model to use |
-| `trustLevel` | `low` | Agent trust level (`low`, `medium`, `high`) |
-| `dryRun` | `true` | When true, mitigator logs actions without executing |
-| `openai.apiKey` | (none) | Set this to use OpenAI instead of Ollama |
-| `openai.baseUrl` | (none) | OpenAI-compatible API base URL |
+| `global.llm.baseUrl` | `http://host.internal:11434/v1` | OpenAI-compatible API base URL (use `host.internal` to reach Ollama on the host) |
+| `global.llm.model` | `glm-4.7-flash` | LLM model to use |
+| `global.llm.apiKey` | `ollama` | API key (any non-empty value works for Ollama) |
+| `operator.trustLevel` | `0` | Operator trust level `0`-`3` (`0` = observe only, actions are suggested but not dispatched) |
+| `mitigator.dryRun` | `true` | When true, mitigator logs actions without executing |
+| `monitor.llm.*` / `mitigator.llm.*` | (inherits `global.llm`) | Per-agent LLM overrides |
+| `sweep.schedule` | `*/30 * * * *` | CronJob schedule for automatic sweeps |
 
-### Using OpenAI instead of Ollama
+### Using a cloud provider instead of Ollama
+
+Any OpenAI-compatible provider works. For example, the Anthropic API:
 
 ```bash
 helm install pinot-agents ./k8s/helm/pinot-agents \
   --namespace pinot \
-  --set openai.apiKey=$OPENAI_API_KEY \
-  --set openai.baseUrl=https://api.openai.com/v1 \
-  --set ollama.model=gpt-4o
+  --set global.llm.baseUrl=https://api.anthropic.com/v1 \
+  --set global.llm.model=claude-sonnet-5 \
+  --set global.llm.apiKey=$ANTHROPIC_API_KEY
 ```
+
+Or OpenAI: `--set global.llm.baseUrl=https://api.openai.com/v1 --set global.llm.model=gpt-5.1 --set global.llm.apiKey=$OPENAI_API_KEY`.
 
 ---
 
@@ -355,7 +357,7 @@ kubectl get pods -n pinot
 kubectl get pods -n monitoring
 
 # Agent system
-kubectl get pods -n pinot -l app=pinot-agents
+kubectl get pods -n pinot -l app.kubernetes.io/name=pinot-agents
 ```
 
 ### Trigger a manual sweep
@@ -365,7 +367,7 @@ kubectl get pods -n pinot -l app=pinot-agents
 kubectl port-forward -n pinot svc/pinot-agents-monitor 3000:3000 &
 
 # Trigger a sweep
-curl -s http://localhost:3000/sweep | jq .
+curl -s -X POST http://localhost:3000/sweep | jq .
 ```
 
 ### Check the audit log
@@ -391,7 +393,7 @@ Open the Prometheus UI at `http://localhost:9090/targets` (after port-forwarding
 
 ### Ollama connectivity from inside the cluster
 
-Pods cannot reach `localhost` on the host machine. Use `host.internal:11434` as the Ollama address. This hostname is resolved by OrbStack to the host's IP.
+Pods cannot reach `localhost` on the host machine. Use `host.internal:11434` as the Ollama address (the chart default is `global.llm.baseUrl=http://host.internal:11434/v1`). This hostname is resolved by OrbStack to the host's IP.
 
 Verify connectivity from inside a pod:
 
